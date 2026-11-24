@@ -1,0 +1,8 @@
+{
+  "name": "pi-team",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22.19.0" },
+  "pi": { "extensions": ["./index.ts"] }
+}
