@@ -5,7 +5,7 @@ import { send, type Address } from './mailbox.ts';
 import { findSummary, threads } from './lifecycle.ts';
 import { getLead, leadState, ledger, members, readJson, teamDir, teams, type LedgerEntry, type Participant, type Snapshot, type Team } from './registry.ts';
 
-const teamLabel = (t: Team) => t.alias ? `${t.id}(${t.aliasLabel ?? t.alias})` : t.id;
+export const teamLabel = (t: Team) => t.alias ? `${t.id}(${t.aliasLabel ?? t.alias})` : t.id;
 
 export function status(t: Team) {
   const lead = getLead(t.id);
@@ -37,6 +37,7 @@ function rowText(p: Participant, events: LedgerEntry[], team: string, state: str
 }
 const views = ['Teams', 'Team', 'Messages', 'Summary'] as const;
 function clean(s: string) { return s.replace(/[\x00-\x1f\x7f-\x9f]/g, ' '); }
+const TEAM_LINES = 4;
 export async function board(ctx: ExtensionContext, initial?: string, sender?: Address) {
   if (!ctx.hasUI) throw new Error('The team board requires interactive Pi.');
   let data = teams().map(status);
@@ -64,10 +65,12 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
         if (!d) lines = ['No teams. Use /team start to create one.'];
         else if (view === 0) lines = data.flatMap(({ team: t, state, rows, sent, diff }, i) => [
           `${selected === i ? '▶' : ' '} ${teamLabel(t)} | ${t.preset} | ${state} | ${rows.length} members | ${sent.length} messages | ${diff}`,
+          `  Goal ${t.goal}`,
           `  Repo ${t.repo} · ${t.workspace ?? 'external'}`,
           `  Worktree ${t.worktree} · ${t.branch}`]);
         else if (view === 1) lines = [
           `${d.team.id} · ${d.team.worktree} · ${d.state}`,
+          `Goal ${d.team.goal}`,
           'Role | member key | actual model | state | current tool/path | sent/received | tokens',
           ...(d.lead ? [rowText(d.lead, d.events, d.team.id, d.state)] : ['Lead has not registered.']),
           ...d.rows.map(p => rowText(p, d.events, d.team.id)),
@@ -77,7 +80,7 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
         else if (view === 2) lines = threads(d.events).flatMap(group => group.map(({ message: e, state }, i) => `${i ? '  ↳' : '•'} ${e.from} → ${e.to} [${state}] ${e.subject ? `${e.subject}: ` : ''}${e.body}`));
         else lines = (findSummary(d.team.id) ?? 'No summary yet.').split('\n');
         if (!lines.length) lines = ['No messages.'];
-        const begin = Math.min(view === 0 ? Math.max(0, (selected - Math.max(1, Math.floor(max / 3)) + 1) * 3) : offset, Math.max(0, lines.length - max));
+        const begin = Math.min(view === 0 ? Math.max(0, (selected - Math.max(1, Math.floor(max / TEAM_LINES)) + 1) * TEAM_LINES) : offset, Math.max(0, lines.length - max));
         const title = `pi-team board · ${views.map((v, i) => i === view ? `[${v}]` : v).join('  ')}`;
         const pad = (s: string) => truncateToWidth(s, width, '', true);
         return [pad(theme.fg('accent', title)), ...lines.slice(begin, begin + max).map(s => pad(clean(s))),

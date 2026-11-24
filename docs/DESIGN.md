@@ -137,11 +137,15 @@ flowchart TB
 
 - **widget**(팀이 있을 때만 한 줄): `teams: A ▶ 4/5 ✉3 · B ✓ done (+120 -14)`
 - **`/team board` overlay**(모든 모드에서 사용 가능, 레지스트리 파일만 읽음, 열려 있는 동안 2초마다 갱신):
-  1. **Teams 화면:** 이름, preset, 상태(lead heartbeat로 판정, 10초 동안 없으면 `stale`), 저장소, worktree 경로, branch, 위치(Herdr workspace 또는 `external`), diff stat, 멤버 수, 메시지 수.
-  2. **Team 화면:** 각 구성원의 역할, member key, 실제 모델(fallback이면 `⇢`), 상태, 현재 도구와 경로, 메시지 S/R, 토큰. 아래에 최근 메시지 5개를 보여 줍니다.
+  1. **Teams 화면:** 이름, preset, 상태(lead heartbeat로 판정, 10초 동안 없으면 `stale`), 목표, 저장소, worktree 경로, branch, 위치(Herdr workspace 또는 `external`), diff stat, 멤버 수, 메시지 수.
+  2. **Team 화면:** 목표와 각 구성원의 역할, member key, 실제 모델(fallback이면 `⇢`), 상태, 현재 도구와 경로, 메시지 S/R, 토큰. 아래에 최근 메시지 5개를 보여 줍니다.
   3. **Messages 화면:** ledger를 스레드 단위로 보여 줍니다(`replyTo`로 묶음).
   4. **Summary 화면:** `summary.md`를 보여 줍니다.
 - **키:** `↑↓`/`Enter`로 이동, `Tab`으로 화면 전환, `s`로 팀장에게 보내기, `Esc`로 닫기.
+- **팀 패널**(`/team panel [on|off]`, `alt+t`, 메인과 팀장 모드):
+  - 입력을 가져가지 않는(`nonCapturing`) overlay입니다. 오른쪽 위 quota 패널(약 10줄) 아래인 11번째 줄부터 너비 50으로 표시하고, 터미널이 좁거나(너비 90 미만) 낮으면(23줄 미만) 숨깁니다.
+  - 팀마다 상태, 목표, 메인이 마지막으로 보낸 위임(`main → lead@<team>`), 팀장과 팀원(실행 중인 팀원 먼저, 최대 6줄)의 상태·실제 모델·현재 도구, 마지막 팀 메시지를 보여 줍니다. 끝난 팀은 목표와 요약 한 줄만 보여 줍니다.
+  - 켜져 있는 동안 2초마다 레지스트리를 다시 읽습니다. 팀장 모드에서는 자기 팀을 맨 위에 둡니다.
 - **데이터 출처:**
   - `team.json`(정적 정보)
   - `lead.json`(팀장 heartbeat: pid, sessionId, state, 현재 활동, 실제 모델)

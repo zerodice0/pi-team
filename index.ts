@@ -9,6 +9,7 @@ import { aliasHints, delegate, readTargets, showAliases, startNamed, type TeamTa
 import { board, status, widget } from './board.ts';
 import { closeTeam, findSummary, parseStart, report, splitGoal } from './lifecycle.ts';
 import { registerMailbox, send, sendParams } from './mailbox.ts';
+import { teamPanel } from './panel.ts';
 import { participant, type ParticipantRuntime } from './participant.ts';
 import { childEntry, generateAgents, imageDisabled, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
 import { errorCode, getTeam, git, isLive, members, teamDir, teams, text, writeJson, type FleetEntry, type Team } from './registry.ts';
@@ -160,6 +161,7 @@ export default async function piTeam(pi: ExtensionAPI) {
   const presets = readPresets(configCwd, team?.id);
   const targets = team ? undefined : readTargets(configCwd, presets);
   const refresh = widget(pi);
+  const panel = teamPanel(pi, team?.id);
   if (targets) {
     registerModels(pi, presets);
     registerMainLoader(pi, refresh, targets);
@@ -198,6 +200,7 @@ export default async function piTeam(pi: ExtensionAPI) {
     try {
       const [, verb = '', args = ''] = /^(\S+)(?:\s+([\s\S]*))?$/.exec(input.trim()) ?? [];
       if (verb === 'board') { try { await board(ctx, team?.id, state?.owner()); } finally { refresh(); } return; }
+      if (verb === 'panel') return panel.command(args.trim(), ctx);
       if (verb === 'preset' && /^show(?:\s+\S+)?$/.test(args)) return show(ctx, presetView(team ? presets : readPresets(configCwd), ctx, args.split(/\s+/)[1]));
       if (verb === 'send') {
         const m = /^(\S+)\s+(?:--\s+)?([\s\S]+)$/.exec(args);
@@ -229,7 +232,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         pi.sendMessage({ customType: 'pi-team-summary', content: summary, display: true, details: { team: args } }, { deliverAs: 'nextTurn' });
         return show(ctx, `Queued ${args} summary for the next user turn (no model request).`);
       }
-      show(ctx, `Usage: /team board | preset show [preset] | send <address> <body>${team ? ' | done [summary]' : ' | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
+      show(ctx, `Usage: /team board | panel [on|off] | preset show [preset] | send <address> <body>${team ? ' | done [summary]' : ' | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
     } catch (e) { if (ctx.hasUI) ctx.ui.notify(e instanceof Error ? e.message : String(e), 'error'); else throw e; }
   } });
 }
