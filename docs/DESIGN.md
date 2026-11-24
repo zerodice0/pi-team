@@ -165,8 +165,24 @@ flowchart TB
 - **팀이 없을 때 메인에 보이는 것:**
   - `/team` 명령
   - virtual model 목록
-  - loader 도구 `team_enable` 하나(설명: 「사용자가 pi 팀 생성·관리를 명시적으로 요청했을 때만 호출」). 호출하면 `team_start`, `team_status`, `team_send`를 활성화합니다.
+  - loader 도구 `team_enable` 하나가 보입니다. 사용자가 팀 생성·관리를 명시적으로 요청하거나 설정된 이름의 팀에 위임을 요청할 때만 호출합니다. 호출하면 `team_start`, `team_status`, `team_send`, `team_delegate`를 활성화합니다.
 - **팀이 없을 때 하지 않는 것:** 파일 감시, polling, widget 표시.
+
+### 별칭
+
+- 전역 `~/.pi/agent/teams/aliases.json`과 프로젝트 `.pi/teams/aliases.json`에서 이름을 정합니다. 키가 같으면 프로젝트 항목이 전역 항목을 통째로 대체합니다. 파일이 없으면 빈 설정으로 처리합니다.
+  ```json
+  {
+    "graphics": {
+      "preset": "mix",
+      "names": ["그래픽", "그래픽 팀", "디자인"],
+      "description": "UI 시안·이미지·시각 검토"
+    }
+  }
+  ```
+- 이름을 소문자로 바꾸고 공백과 끝의 `팀`·`team`을 제거합니다. 키, 별칭 이름, preset 이름 순으로 찾습니다. 별칭에 서로 겹치는 이름을 붙이거나 존재하지 않는 preset을 지정하면 설정 오류가 납니다. 필요하면 `base`로 시작 기준 ref를 지정합니다.
+- 메인 세션에 「그래픽 팀에게 작업을 위임해 줘」라고 요청하거나 `/team delegate 그래픽 팀 -- <작업>`을 실행합니다. 같은 별칭을 기록한 미보관 팀 중 가장 최근 팀이 있으면 그 팀장의 inbox에 작업을 보냅니다. 팀장이 실행 중이 아니어도 메시지는 inbox에 남습니다. 팀이 없으면 해당 preset으로 시작합니다.
+- `/team alias show`에서 preset과 현재 팀의 상태를 확인합니다. `/team start <별칭>`은 기존 팀을 재사용하지 않고 새 팀을 만듭니다. 별칭 키를 팀 ID로 사용하되 이미 쓰인 ID·아카이브·브랜치는 `-2`, `-3`을 붙여 피합니다. `--name`을 지정하면 그 값을 우선합니다.
 
 ## 10. 수용 기준
 

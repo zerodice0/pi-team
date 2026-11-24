@@ -2,9 +2,9 @@ import { realpathSync, renameSync, rmSync } from 'node:fs';
 import { dirname, basename, isAbsolute, join, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { generateAgents, readPresets } from './presets.ts';
-import { appendLedger, diffStat, exec, exists, getLead, getTeam, git, isLive, ledger, locked, log, members, mkdir, namePattern, readText, root, teamDir, writeAtomic, writeJson, type Team, type LedgerEntry } from './registry.ts';
+import { appendLedger, diffStat, exec, exists, getLead, getTeam, git, isLive, ledger, locked, log, members, mkdir, readText, root, teamDir, writeAtomic, writeJson, type Team, type LedgerEntry } from './registry.ts';
 
-interface Start { preset: string; name?: string; base?: string; fromDirty?: boolean; goal: string }
+export interface Start { preset: string; name?: string; base?: string; fromDirty?: boolean; goal: string }
 interface HerdrCreated { workspace: { workspace_id: string }; root_pane: { pane_id: string }; worktree: { path: string } }
 function herdr<T>(cwd: string, ...args: string[]): T {
   const output = exec('herdr', args, cwd);
@@ -15,10 +15,7 @@ function herdr<T>(cwd: string, ...args: string[]): T {
   return data.result;
 }
 const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
-export function start(cwd: string, p: Start) {
-  const id = p.name ?? `${p.preset.slice(0, 23)}-${randomBytes(4).toString('hex')}`;
-  const dir = teamDir(id);
-  if (id === 'archive' || id === 'vendor') throw new Error(`Reserved team name: ${id}`);
+export function start(cwd: string, p: Start, alias?: { key: string; names: string[] }) {
   if (!p.goal.trim() || p.goal.includes('\0')) throw new Error('A goal is required.');
   const repo = realpathSync(git(cwd, ['rev-parse', '--show-toplevel']));
   const presets = readPresets(repo);
@@ -26,20 +23,36 @@ export function start(cwd: string, p: Start) {
   const base = p.base ?? 'HEAD';
   const baseCommit = git(repo, ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`]);
   const symbolic = git(repo, ['rev-parse', '--symbolic-full-name', '--end-of-options', base]).split('\n').find(x => x.startsWith('refs/heads/') || x.startsWith('refs/remotes/'));
-  if (!p.fromDirty && git(repo, ['status', '--porcelain'])) throw new Error('Working tree is dirty; use --from-dirty to branch from the committed base anyway.');
-  const branch = `pi-team/${id}`;
-  const archive = join(root, 'archive', id);
-  // Reserve this ID before making anything in Git or Herdr.
-  locked(join(root, '.teams.lock'), () => {
-    if (exists(dir) || exists(archive)) throw new Error(`Team already exists: ${id}`);
+  if (!p.fromDirty && git(repo, ['status', '--porcelain'])) throw new Error('Working tree is dirty. Ask the user to confirm before retrying with fromDirty: true (CLI: --from-dirty); the team starts from the committed base only.');
+  // Allocate and reserve the ID together so concurrent starts cannot pick the same name.
+  const archive = join(root, 'archive');
+  const id = locked(join(root, '.teams.lock'), () => {
+    let name = p.name ?? alias?.key ?? `${p.preset.slice(0, 23)}-${randomBytes(4).toString('hex')}`;
+    const reserved = (candidate: string) => candidate === 'archive' || candidate === 'vendor';
+    if (p.name === undefined && alias) {
+      const prefix = 'refs/heads/pi-team/';
+      const branches = new Set(git(repo, ['for-each-ref', '--format=%(refname)', prefix]).split('\n')
+        .filter(ref => ref.startsWith(prefix)).map(ref => ref.slice(prefix.length)));
+      for (let n = 2; reserved(name) || exists(teamDir(name)) || exists(join(archive, name)) || branches.has(name); n++) {
+        const suffix = `-${n}`;
+        name = `${alias.key.slice(0, 32 - suffix.length)}${suffix}`;
+      }
+    }
+    const dir = teamDir(name);
+    if (reserved(name)) throw new Error(`Reserved team name: ${name}`);
+    if (exists(dir) || exists(join(archive, name))) throw new Error(`Team already exists: ${name}`);
     mkdir(dir);
+    return name;
   });
+  const dir = teamDir(id);
+  const branch = `pi-team/${id}`;
   const captured = presets;
   let made = false;
   let team: Team | undefined;
   try {
     const worktree = join(dirname(repo), 'worktrees', basename(repo), `team-${id}`);
-    team = { id, preset: p.preset, repo, worktree, branch, base, baseCommit, baseBranch: symbolic, goal: p.goal, createdAt: Date.now() };
+    team = { id, preset: p.preset, repo, worktree, branch, base, baseCommit, baseBranch: symbolic, goal: p.goal, createdAt: Date.now(),
+      alias: alias?.key, aliasLabel: alias?.names[0] };
     mkdir(dirname(worktree));
     if (process.env.HERDR_PANE_ID) {
       const response = herdr<HerdrCreated>(repo, 'worktree', 'create', '--cwd', repo, '--branch', branch, '--base', baseCommit, '--path', worktree, '--label', `pi-team ${id}`, '--no-focus');
@@ -178,12 +191,19 @@ export function report(team: Team, summary: string, status: string) {
   writeAtomic(path, lines.join('\n'));
   return path;
 }
+export function splitGoal(args: string, usage: string) {
+  const marker = /(?:^|\s)--(?:\s|$)/u.exec(args);
+  const target = marker && args.slice(0, marker.index).trim();
+  const goal = marker && args.slice(marker.index + marker[0].length).trim();
+  if (!target || !goal) throw new Error(usage);
+  return { target, goal };
+}
 export function parseStart(args: string): Start {
-  const marker = /(?:^|\s)--(?:\s|$)/.exec(args);
-  if (!marker) throw new Error('Usage: /team start <preset> [--name N] [--base REF] [--from-dirty] -- <goal>');
-  const goal = args.slice(marker.index + marker[0].length).trim();
-  const [preset, ...tokens] = args.slice(0, marker.index).trim().split(/\s+/);
-  if (!namePattern.test(preset)) throw new Error(`Invalid preset: ${preset}`);
+  const { target, goal } = splitGoal(args, 'Usage: /team start <preset or alias> [--name N] [--base REF] [--from-dirty] -- <goal>');
+  const firstFlag = /(?:^|\s)--\S/u.exec(target);
+  const preset = firstFlag ? target.slice(0, firstFlag.index).trim() : target;
+  if (!preset) throw new Error('A preset or alias is required.');
+  const tokens = firstFlag ? target.slice(firstFlag.index).trim().split(/\s+/u) : [];
   const result: Start = { preset, goal };
   const seen = new Set();
   for (let i = 0; i < tokens.length; i++) {

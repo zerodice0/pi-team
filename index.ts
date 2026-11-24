@@ -5,8 +5,9 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { realpathSync } from 'node:fs';
+import { aliasHints, delegate, readTargets, showAliases, startNamed, type TeamTargets } from './aliases.ts';
 import { board, status, widget } from './board.ts';
-import { closeTeam, findSummary, parseStart, report, start } from './lifecycle.ts';
+import { closeTeam, findSummary, parseStart, report, splitGoal } from './lifecycle.ts';
 import { registerMailbox, send, sendParams } from './mailbox.ts';
 import { participant, type ParticipantRuntime } from './participant.ts';
 import { childEntry, generateAgents, imageDisabled, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
@@ -57,24 +58,36 @@ function teamStatus(select?: string) {
   const info = status(team);
   return { team, state: info.state, lead: info.lead, members: info.rows, diff: info.diff, messages: info.sent.length, summary };
 }
-function registerMainLoader(pi: ExtensionAPI, refresh: () => void) {
+function registerMainLoader(pi: ExtensionAPI, refresh: () => void, targets: TeamTargets) {
+  const hints = aliasHints(targets);
+  const activation = hints
+    ? `Only call when the user expressly asks you to create or manage a Pi team or to delegate work to a named team. Configured team aliases: ${hints}. Use team_delegate for named-team delegation even if the team already exists.`
+    : 'Only call when the user expressly asks you to create or manage a Pi team.';
+  const toolNames = ['team_start', 'team_status', 'team_send', 'team_delegate'];
   let installed = false;
   pi.on('session_shutdown', () => { installed = false; });
   pi.registerTool({ name: 'team_enable', label: 'Enable team tools',
-    description: 'Only call when the user expressly asks you to create or manage a Pi team. Enables team_start, team_status, team_send without changing model or subagent tools.', parameters: Type.Object({}),
+    description: `${activation} Enables ${toolNames.join(', ')} without changing model or subagent tools.`, parameters: Type.Object({}),
     async execute() {
       if (!installed) {
-        pi.registerTool({ name: 'team_start', label: 'Start team', description: 'Create a Pi team worktree and give the user its interactive lead. Only when explicitly requested.',
+        pi.registerTool({ name: 'team_start', label: 'Start team', description: 'Create a new Pi team from a preset or alias and give the user its interactive lead. Only when explicitly requested.',
           parameters: Type.Object({ preset: Type.String(), name: Type.Optional(Type.String()), base: Type.Optional(Type.String()), fromDirty: Type.Optional(Type.Boolean()), goal: Type.String() }),
-          async execute(_id, p, _signal, _update, ctx) { const result = start(ctx.cwd, p); refresh(); return text(result); } });
+          async execute(_id, p, _signal, _update, ctx) { const result = startNamed(ctx.cwd, targets, p); refresh(); return text(result); } });
         pi.registerTool({ name: 'team_status', label: 'Team status', description: 'Read active team registry or the selected team summary.', parameters: Type.Object({ team: Type.Optional(Type.String()) }),
           async execute(_id, p) { return text(JSON.stringify(teamStatus(p.team))); } });
-        pi.registerTool({ name: 'team_send', label: 'Send to team lead', description: 'Send to a team lead at lead@<team>.', parameters: sendParams,
+        pi.registerTool({ name: 'team_send', label: 'Send to team lead', description: 'Send a direct message to an exact lead@<team> address. For assigning work to a named team, use team_delegate instead, even if you know its address.', parameters: sendParams,
           async execute(_id, p) { return text(JSON.stringify(send(undefined, p))); } });
+        pi.registerTool({ name: 'team_delegate', label: 'Delegate to a team', description: 'Use this for every request to assign work to a named team, including follow-up assignments. Pass the alias key or natural-language name even if you know an existing team ID. This tool selects the current team or starts one. A bare preset starts a new team. Ask the user before using fromDirty. Relay any lead launch command to the user.',
+          parameters: Type.Object({ team: Type.String(), task: Type.String(), fromDirty: Type.Optional(Type.Boolean({ default: false })) }),
+          async execute(_id, p, _signal, _update, ctx) {
+            const result = delegate(ctx.cwd, targets, p.team, p.task, p.fromDirty);
+            refresh();
+            return text(result);
+          } });
         installed = true;
       }
-      pi.setActiveTools([...new Set([...pi.getActiveTools(), 'team_start', 'team_status', 'team_send'])]);
-      return text('Enabled team_start, team_status, team_send.');
+      pi.setActiveTools([...new Set([...pi.getActiveTools(), ...toolNames])]);
+      return text(`Enabled ${toolNames.join(', ')}.`);
     } });
 }
 function snapshots(pi: ExtensionAPI, team: Team) {
@@ -145,10 +158,11 @@ export default async function piTeam(pi: ExtensionAPI) {
   const cwd = team?.worktree ?? process.cwd();
   const configCwd = team ? cwd : (() => { try { return git(cwd, ['rev-parse', '--show-toplevel']); } catch { return cwd; } })();
   const presets = readPresets(configCwd, team?.id);
+  const targets = team ? undefined : readTargets(configCwd, presets);
   const refresh = widget(pi);
-  if (!team) {
+  if (targets) {
     registerModels(pi, presets);
-    registerMainLoader(pi, refresh);
+    registerMainLoader(pi, refresh, targets);
     generateAgents(presets);
   }
   let state: ParticipantRuntime | undefined;
@@ -195,7 +209,14 @@ export default async function piTeam(pi: ExtensionAPI) {
         const summary = args || state.row()?.result || 'The lead marked this team done.';
         const path = report(team, summary, 'done'); state.update('done'); return show(ctx, path);
       }
-      if (!team && verb === 'start') { const output = start(ctx.cwd, parseStart(args)); refresh(); return show(ctx, output); }
+      if (targets && verb === 'start') {
+        const output = startNamed(ctx.cwd, targets, parseStart(args)); refresh(); return show(ctx, output);
+      }
+      if (targets && verb === 'delegate') {
+        const { target, goal } = splitGoal(args, 'Usage: /team delegate <alias or preset> -- <task>');
+        const output = delegate(ctx.cwd, targets, target, goal); refresh(); return show(ctx, output);
+      }
+      if (targets && verb === 'alias' && args === 'show') return show(ctx, showAliases(targets));
       if (!team && verb === 'close') {
         const [name, ...flags] = args.split(/\s+/);
         if (!name || flags.some(f => !['--confirm-lead', '--confirm-unmerged'].includes(f))) throw new Error('Usage: /team close <team> [--confirm-lead] [--confirm-unmerged]');
@@ -208,7 +229,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         pi.sendMessage({ customType: 'pi-team-summary', content: summary, display: true, details: { team: args } }, { deliverAs: 'nextTurn' });
         return show(ctx, `Queued ${args} summary for the next user turn (no model request).`);
       }
-      show(ctx, `Usage: /team board | preset show [preset] | send <address> <body>${team ? ' | done [summary]' : ' | start <preset> [options] -- <goal> | collect <team> | close <team>'}`);
+      show(ctx, `Usage: /team board | preset show [preset] | send <address> <body>${team ? ' | done [summary]' : ' | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
     } catch (e) { if (ctx.hasUI) ctx.ui.notify(e instanceof Error ? e.message : String(e), 'error'); else throw e; }
   } });
 }

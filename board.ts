@@ -5,6 +5,8 @@ import { send, type Address } from './mailbox.ts';
 import { findSummary, threads } from './lifecycle.ts';
 import { getLead, leadState, ledger, members, readJson, teamDir, teams, type LedgerEntry, type Participant, type Snapshot, type Team } from './registry.ts';
 
+const teamLabel = (t: Team) => t.alias ? `${t.id}(${t.aliasLabel ?? t.alias})` : t.id;
+
 export function status(t: Team) {
   const lead = getLead(t.id);
   const snapshot = readJson<Snapshot>(join(teamDir(t.id), 'members.json'));
@@ -61,7 +63,7 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
         let lines: string[];
         if (!d) lines = ['No teams. Use /team start to create one.'];
         else if (view === 0) lines = data.flatMap(({ team: t, state, rows, sent, diff }, i) => [
-          `${selected === i ? '▶' : ' '} ${t.id} | ${t.preset} | ${state} | ${rows.length} members | ${sent.length} messages | ${diff}`,
+          `${selected === i ? '▶' : ' '} ${teamLabel(t)} | ${t.preset} | ${state} | ${rows.length} members | ${sent.length} messages | ${diff}`,
           `  Repo ${t.repo} · ${t.workspace ?? 'external'}`,
           `  Worktree ${t.worktree} · ${t.branch}`]);
         else if (view === 1) lines = [
@@ -109,7 +111,7 @@ export function widget(pi: ExtensionAPI) {
     const next = active.map(t => {
       const d = status(t);
       const finished = d.rows.filter(p => ['done', 'failed', 'stopped'].includes(p.state)).length;
-      return `${t.id} ${d.state === 'done' ? `✓ done (${d.diff})` : `${d.state === 'stale' ? '!' : '▶'} ${finished}/${d.rows.length} ✉${d.sent.length}`}`;
+      return `${teamLabel(t)} ${d.state === 'done' ? `✓ done (${d.diff})` : `${d.state === 'stale' ? '!' : '▶'} ${finished}/${d.rows.length} ✉${d.sent.length}`}`;
     }).join(' · ');
     if (next !== before) ctx.ui.setWidget('pi-team', next ? [`teams: ${next}`] : undefined);
     before = next;

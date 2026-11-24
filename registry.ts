@@ -14,6 +14,7 @@ export function teamDir(team: string) {
 export interface Team {
   id: string; preset: string; repo: string; worktree: string; branch: string; base: string; baseCommit: string;
   baseBranch?: string; goal: string; createdAt: number; workspace?: string; pane?: string;
+  alias?: string; aliasLabel?: string;
 }
 export interface Participant {
   key: string; role: string; pid: number; sessionId: string; sessionFile?: string; at: number;
