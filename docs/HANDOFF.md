@@ -21,7 +21,7 @@
 
 1. **rogallyx 환경 준비**
    - pi 로그인: 사용자가 `/login`으로 anthropic과 openai-codex OAuth를 직접 해야 합니다. 다른 호스트의 `auth.json`은 복사하지 않습니다. refresh token이 회전하면서 서로 무효화되기 때문입니다.
-   - `pi install npm:pi-subagents`와 `pi install ~/workspace/development/pi-team`을 실행합니다.
+   - 완료(Mac Studio 세션이 처리): pi-subagents와 pi-team 설치(`pi install`), Herdr pi 통합, `.pi/lsp.json` 템플릿.
    - image 역할을 쓸 경우에만 `npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2`를 실행합니다.
 2. **Linux 회귀 검증**
    - A1~A8과 B1~B4를 rogallyx(CachyOS, fish, Herdr 0.9.5)에서 다시 확인합니다. 시험용 저렴한 preset을 쓰고, 일회용 저장소에서 실행합니다.
@@ -38,6 +38,9 @@
    - 소유 PID가 이미 죽은 잠금을 안전하게 회수하는 기능을 구현합니다.
 5. **배포 호스트 확대**
    - winmax2와 desktop-1이 다시 온라인이 되면 pi와 Herdr pi 통합을 설치합니다. 각 호스트의 로그인은 사용자가 합니다.
+6. **메인 기본 모델 문제**
+   - rogallyx는 pi가 로그인되어 있지 않고 `defaultModel`도 설정되어 있지 않습니다. 이 상태로 pi를 처음 실행하자 메인 세션의 모델이 `mix.orchestrator`(virtual model)로 표시되었습니다.
+   - 이는 "메인 모델은 바꾸지 않는다" 계약에 어긋날 수 있습니다. virtual model이 기본 모델 후보로 선택되는 조건을 확인하고, 필요하면 막는 방법을 찾습니다.
 
 ## 지켜야 할 계약
 
