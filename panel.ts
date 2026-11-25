@@ -10,8 +10,15 @@ import { readJson, root, teams, writeJson, type Participant } from './registry.t
 // panel's titanium palette and frame, so the two read as one stack. In fullscreen mode
 // the title row is a drag handle; the position is remembered in teams/panel.json.
 const WIDTH = 50;
-const TOP = 11;
+// pi-tui clamps an overlay to its margins after applying offsets, so a large top margin
+// would pin the panel below it. Keep the margin minimal and express the default position
+// (row 11, under quota-panel.ts) as an offset that dragging can change in both directions.
+const MARGIN = 1;
+const DEFAULT_Y = 10;
 const RIGHT = 1;
+const FRAME = 4; // title, two padding rows and the bottom border
+const MIN_BODY = 3;
+const RESERVE = 5; // bottom rows kept clear for the widget, editor and footer
 const LIVE_ROWS = 5;
 const REFRESH_MS = 2000;
 const positionFile = join(root, 'panel.json');
@@ -135,7 +142,7 @@ export function teamLines(d: Info, inner: number): Line[] {
   return lines;
 }
 
-interface Position { offsetX: number; offsetY: number }
+interface Position { v?: number; offsetX: number; offsetY: number }
 export function teamPanel(pi: ExtensionAPI, current?: string) {
   let data: Info[] = [];
   let loadError: string | undefined;
@@ -144,20 +151,27 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
   let rerender: (() => void) | undefined;
   let timer: NodeJS.Timeout | undefined;
   let visible = false;
-  let height = 0;
   let drag: { x: number; y: number; ox: number; oy: number } | undefined;
   const saved = readJson<Position>(positionFile);
+  // Version 1 stored offsetY relative to the old 11-row top margin.
+  const savedY = saved ? saved.v === 2 ? saved.offsetY : saved.offsetY + DEFAULT_Y : DEFAULT_Y;
   const options: OverlayOptions = {
-    anchor: 'top-right', width: WIDTH, margin: { top: TOP, right: RIGHT }, nonCapturing: true,
-    offsetX: saved?.offsetX ?? 0, offsetY: saved?.offsetY ?? 0,
-    visible: (w, h) => w >= WIDTH + 40 && h >= TOP + 12,
+    anchor: 'top-right', width: WIDTH, margin: { top: MARGIN, right: RIGHT }, nonCapturing: true,
+    offsetX: saved?.offsetX ?? 0, offsetY: savedY,
+    visible: (w, h) => w >= WIDTH + 40 && h >= MARGIN + FRAME + MIN_BODY + RESERVE + 4,
   };
-  const save = () => { try { writeJson(positionFile, { offsetX: options.offsetX ?? 0, offsetY: options.offsetY ?? 0 }); } catch { /* position is a convenience */ } };
+  const maxY = (rows: number) => Math.max(0, rows - RESERVE - FRAME - MIN_BODY - MARGIN);
+  const save = () => { try { writeJson(positionFile, { v: 2, offsetX: options.offsetX ?? 0, offsetY: options.offsetY ?? DEFAULT_Y }); } catch { /* position is a convenience */ } };
   const rank = (d: Info) => d.team.id === current ? 0 : d.state === 'done' ? 2 : 1;
+  // Heartbeats rewrite lead.json and members every two seconds without changing what the panel shows.
+  // Ask for a frame only when the drawn content changes; pi still calls render() on every frame it draws.
+  let drawnWidth = WIDTH;
+  let drawn = '';
   const load = () => {
     try { data = teams().map(status).sort((a, b) => rank(a) - rank(b) || b.team.createdAt - a.team.createdAt); loadError = undefined; }
     catch (e) { loadError = String(e); }
-    rerender?.();
+    const next = JSON.stringify([loadError, data.map(d => teamLines(d, drawnWidth - 4))]);
+    if (next !== drawn) { drawn = next; rerender?.(); }
   };
   const show = (ctx: ExtensionContext) => {
     visible = true;
@@ -189,20 +203,24 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
       const blank: Line = { left: [] };
       return {
         render(width: number) {
+          drawnWidth = width;
           const inner = width - 4;
           const active = data.filter(d => d.state !== 'done').length;
           const blocks: Line[][] = loadError ? [[{ left: [[oneLine(loadError), 'crit']] }]]
             : data.length ? data.map(d => teamLines(d, inner))
             : [[{ left: [['No teams running', 'name', true]] }, { left: [['/team start <preset> -- <goal>', 'label']] },
               { left: [['Drag this title to move · alt+t to hide', 'label']] }]];
-          // Fit the stack to the terminal, keeping whole teams where possible.
-          const room = Math.max(4, tui.terminal.rows - (TOP + (options.offsetY ?? 0)) - 6);
+          // Fit the stack between the panel's top row and the editor, keeping whole teams where possible.
+          const top = MARGIN + Math.min(options.offsetY ?? DEFAULT_Y, maxY(tui.terminal.rows));
+          const room = Math.max(MIN_BODY, tui.terminal.rows - top - FRAME - RESERVE);
           const body: (Line | 'rule')[] = [];
           for (const [i, block] of blocks.entries()) {
             const need = block.length + (i ? 1 : 0);
             if (body.length + need > room) {
               const left = blocks.length - i;
-              if (body.length < room) body.push({ left: [['  '], [`+${left} more team${left === 1 ? '' : 's'} · /team board`, 'label']] });
+              // A first team taller than the room is cut rather than dropped.
+              if (i === 0) body.push(...block.slice(0, room - 1));
+              if (body.length < room) body.push({ left: [['  '], [i === 0 ? '… more in /team board' : `+${left} more team${left === 1 ? '' : 's'} · /team board`, 'label']] });
               break;
             }
             if (i) body.push('rule');
@@ -220,7 +238,6 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
             row(blank, width),
             rule(width, ['╰', '╯']),
           ];
-          height = lines.length;
           return lines;
         },
         // Fullscreen mode routes mouse input to overlays; drag the title row to move the panel.
@@ -232,10 +249,9 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
           if (!drag) return undefined;
           if (event.type === 'drag' || event.type === 'move') {
             const cols = tui.terminal.columns;
-            const rows = tui.terminal.rows;
             const baseCol = cols - RIGHT - WIDTH;
-            options.offsetX = Math.min(RIGHT, Math.max(-baseCol, drag.ox + event.screenX - drag.x));
-            options.offsetY = Math.min(Math.max(0, rows - TOP - height), Math.max(-TOP, drag.oy + event.screenY - drag.y));
+            options.offsetX = Math.min(0, Math.max(-baseCol, drag.ox + event.screenX - drag.x));
+            options.offsetY = Math.min(maxY(tui.terminal.rows), Math.max(0, drag.oy + event.screenY - drag.y));
             return { handled: true, capture: true, render: true };
           }
           if (event.type === 'release' || event.type === 'click') {
@@ -264,7 +280,7 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
       if (!ctx.hasUI) throw new Error('The team panel requires interactive Pi.');
       if (args === 'on') show(ctx);
       else if (args === 'off') hide();
-      else if (args === 'reset') { options.offsetX = 0; options.offsetY = 0; save(); show(ctx); rerender?.(); }
+      else if (args === 'reset') { options.offsetX = 0; options.offsetY = DEFAULT_Y; save(); show(ctx); rerender?.(); }
       else if (!args) toggle(ctx);
       else throw new Error('Usage: /team panel [on|off|reset]');
     },
