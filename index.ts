@@ -13,6 +13,8 @@ import { teamPanel } from './panel.ts';
 import { herdrStatus } from './herdr-status.ts';
 import { participant, type ParticipantRuntime } from './participant.ts';
 import { childEntry, generateAgents, imageDisabled, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
+import { skillCatalog, skillSize } from './skills.ts';
+import { backfillStats, loadStats, roleSkills, statsReport, trackRun } from './stats.ts';
 import { errorCode, getTeam, git, isLive, members, teamDir, teams, text, writeJson, type FleetEntry, type Team } from './registry.ts';
 
 interface Registration { dispose(): void }
@@ -185,13 +187,14 @@ export default async function piTeam(pi: ExtensionAPI) {
     pi.on('session_shutdown', () => { registration?.dispose(); registration = undefined; });
     state = participant(pi, team, () => 'orchestrator', true);
     const lead = state;
+    trackRun(pi, team, lead.row);
     registerModels(pi, presets, lead.routed);
     registerMailbox(pi, lead.owner, lead.update);
     snapshots(pi, team);
     herdrStatus(pi, team);
     guardDelegation(pi, team, presets, registerRoleAgents(pi, team, presets));
     if (orchestrator.tools || orchestrator.readOnly) pi.on('session_start', () => {
-      const allowed = orchestrator.tools && new Set([...orchestrator.tools, 'subagents_enable', 'subagent', 'team_peers', 'team_send', 'team_inbox', 'team_wait', 'team_report']);
+      const allowed = orchestrator.tools && new Set([...orchestrator.tools, 'subagents_enable', 'subagent', 'team_peers', 'team_send', 'team_inbox', 'team_wait', 'team_report', 'team_skills']);
       const available = allowed ? pi.getAllTools().map(t => t.name).filter(t => allowed.has(t)) : pi.getActiveTools();
       pi.setActiveTools(available.filter(t => !orchestrator.readOnly || (t !== 'write' && t !== 'edit')));
     });
@@ -218,6 +221,28 @@ export default async function piTeam(pi: ExtensionAPI) {
         });
       });
     }
+    // Installed skills only: no network and no installs while a team runs.
+    pi.registerTool({ name: 'team_skills', label: 'Team skills',
+      description: 'Search installed skills to give a member extra ones. Shows each match with its size and how often members of a role read it. Pass role to see that role\'s default skills.',
+      parameters: Type.Object({ query: Type.Optional(Type.String()), role: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 40 })) }),
+      async execute(_id, p) {
+        const roles = presets[team.preset];
+        if (p.role && (!Object.hasOwn(roles, p.role) || p.role === 'orchestrator')) throw new Error(`Unknown role ${p.role}. Use one of: ${Object.keys(roles).filter(r => r !== 'orchestrator').join(', ')}.`);
+        const stats = loadStats();
+        const usage = p.role ? new Map(roleSkills(stats, p.role).uses.map(u => [u.name, u])) : undefined;
+        const words = (p.query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+        const matches = skillCatalog(team.worktree).filter(s => words.every(w => `${s.name} ${s.description}`.toLowerCase().includes(w)));
+        const lines = matches.slice(0, p.limit ?? 15).map(s => {
+          const u = usage?.get(s.name);
+          return `- ${s.name} (${Math.round(skillSize(s) / 1000)}k chars${u ? `; ${p.role} read it in ${u.read} of ${Math.max(u.listed, u.read)} runs` : ''}): ${s.description.replace(/\s+/g, ' ').slice(0, 220)}`;
+        });
+        const defaults = p.role ? roles[p.role].skills ?? [] : undefined;
+        return text([
+          ...(defaults ? [`${p.role} default skills: ${defaults.length ? defaults.join(', ') : 'none'}`] : []),
+          `${matches.length} installed skills match${matches.length > lines.length ? ` (showing ${lines.length})` : ''}.`, ...lines,
+          'To add skills for one member, pass subagent skill: [default skills..., extra skills...]; the list replaces the role defaults. Every listed skill costs its description on each turn and its body once read, so add only what this task needs.',
+        ].join('\n'));
+      } });
     pi.registerTool({ name: 'team_report', label: 'Team report', description: 'Save the team summary and gathered outcomes to summary.md. Use status done on completion.',
       parameters: Type.Object({ summary: Type.String(), status: Type.String() }),
       async execute(_id, p) { const path = report(team, p.summary, p.status); if (p.status === 'done') lead.update('done'); return text(path); } });
@@ -228,6 +253,8 @@ export default async function piTeam(pi: ExtensionAPI) {
       const [, verb = '', args = ''] = /^(\S+)(?:\s+([\s\S]*))?$/.exec(input.trim()) ?? [];
       if (verb === 'board') { try { await board(ctx, team?.id, state?.owner()); } finally { refresh(); } return; }
       if (verb === 'panel') return panel.command(args.trim(), ctx);
+      if (verb === 'stats' && /^import(\s+--dry-run)?$/.test(args.trim())) return show(ctx, backfillStats(args.includes('--dry-run')));
+      if (verb === 'stats') return show(ctx, statsReport(loadStats(), args.trim() || undefined));
       if (verb === 'preset' && /^show(?:\s+\S+)?$/.test(args)) return show(ctx, presetView(team ? presets : readPresets(configCwd), ctx, args.split(/\s+/)[1]));
       if (verb === 'send') {
         const m = /^(\S+)\s+(?:--\s+)?([\s\S]+)$/.exec(args);
@@ -259,7 +286,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         pi.sendMessage({ customType: 'pi-team-summary', content: summary, display: true, details: { team: args } }, { deliverAs: 'nextTurn' });
         return show(ctx, `Queued ${args} summary for the next user turn (no model request).`);
       }
-      show(ctx, `Usage: /team board | panel [on|off|reset] | preset show [preset] | send <address> <body>${team ? ' | done [summary]' : ' | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
+      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import] | preset show [preset] | send <address> <body>${team ? ' | done [summary]' : ' | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
     } catch (e) { if (ctx.hasUI) ctx.ui.notify(e instanceof Error ? e.message : String(e), 'error'); else throw e; }
   } });
 }

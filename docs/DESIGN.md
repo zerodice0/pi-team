@@ -137,6 +137,7 @@ flowchart TB
   - 작업 중이면 `sendMessage(…, {deliverAs:"steer"})`로 넣습니다.
   - idle 팀장은 `triggerTurn:true`로 바로 턴을 시작합니다(E2). idle 팀원은 다음 턴에 받습니다.
 - **도구:** `team_peers`, `team_send`, `team_inbox`, `team_wait(≤120s)`. `team_peers`는 상태와 주소만 반환합니다(끝난 구성원의 결과 전문은 넣지 않음).
+- **실행 기록(`stats.ts`):** 참가자마다 `teams/stats/`에 역할·턴·토큰·비용·최대 문맥·목록 스킬·읽은 스킬을 남깁니다. `/team stats`는 이를 adopted, retire candidates, assign candidates로 분류하고, `/team stats import`는 과거 세션 파일에서 기록을 만듭니다. 팀장은 `team_skills`로 설치된 스킬을 검색해 구성원 한 명에게 `skill` 옵션으로 더해 줍니다.
 - **제한:**
   - hop 5회
   - 송신자당 분당 20건

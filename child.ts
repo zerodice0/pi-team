@@ -6,6 +6,7 @@ import { participant } from './participant.ts';
 import { imageDisabled, readPresets, registerModels } from './presets.ts';
 import { getTeam, root, writeJson } from './registry.ts';
 import { board, widget } from './board.ts';
+import { trackRun } from './stats.ts';
 
 export default function child(pi: ExtensionAPI) {
   const id = process.env.PI_TEAM_ID;
@@ -22,6 +23,7 @@ export default function child(pi: ExtensionAPI) {
     if (role === 'image' && imageDisabled()) throw new Error(`Image role disabled: ${imageDisabled()}`);
   });
   const state = participant(pi, team, () => role, false, key => presets[team.preset][key].max);
+  trackRun(pi, team, state.row);
   registerModels(pi, presets, state.routed);
   registerMailbox(pi, state.owner, state.update);
   widget(pi);

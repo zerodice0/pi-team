@@ -1,9 +1,8 @@
-import { readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { realpathSync, renameSync, rmSync } from 'node:fs';
 import { dirname, basename, isAbsolute, join, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { getAgentDir, loadSkills } from '@earendil-works/pi-coding-agent';
 import { generateAgents, imageDisabled, readPresets, type Presets } from './presets.ts';
+import { leadSkillArgs } from './skills.ts';
 import { appendLedger, checkIcon, defaultIcon, diffStat, exec, exists, getLead, getTeam, git, isLive, ledger, locked, log, members, mkdir, readText, root, teamDir, teams, writeAtomic, writeJson, type Team, type LedgerEntry } from './registry.ts';
 
 export interface Start { preset: string; name?: string; base?: string; fromDirty?: boolean; goal: string; icon?: string }
@@ -71,24 +70,6 @@ export function dirtyState(repo: string) {
   const skipped = all.filter(path => !left.some(l => l.startsWith(path) || path.startsWith(l))).length;
   return { porcelain: [tracked, ...left.map(path => `?? ${path}`)].filter(Boolean).join('\n'), skipped };
 }
-// The lead coordinates; it does not need the whole skill catalogue in every request (79 skills were
-// about 45k characters of system prompt on each turn). Give it these skills, or the orchestrator's
-// own `skills` list, plus any skills the repository itself ships. `skills: ["*"]` keeps them all.
-export const leadSkills = ['fluent-korean', 'herdr-agent-messenger', 'pi-subagents'];
-export function leadSkillArgs(wanted: string[] | undefined, worktree: string) {
-  const names = wanted ?? leadSkills;
-  if (names.includes('*')) return [];
-  // loadSkills() alone reads only <agentDir>/skills and <cwd>/.pi/skills; pi's package manager also adds
-  // ~/.agents/skills, .agents/skills in the worktree, and the skills of installed packages (pi-subagents).
-  const agentDir = getAgentDir();
-  const packages = join(agentDir, 'npm', 'node_modules');
-  const packageDirs = (dir: string): string[] => { try { return readdirSync(dir, { withFileTypes: true }).filter(d => d.isDirectory() && !d.name.startsWith('.')).flatMap(d => d.name.startsWith('@') ? packageDirs(join(dir, d.name)) : [join(dir, d.name)]); } catch { return []; } };
-  const skillPaths = [join(homedir(), '.agents', 'skills'), join(worktree, '.agents', 'skills'), ...packageDirs(packages).map(dir => join(dir, 'skills'))].filter(exists);
-  const { skills } = loadSkills({ cwd: worktree, agentDir, skillPaths, includeDefaults: true });
-  const inRepo = (path: string) => { const rel = relative(worktree, path); return !!rel && !isAbsolute(rel) && !rel.startsWith('..'); };
-  const chosen = skills.filter(s => names.includes(s.name) || inRepo(s.filePath));
-  return ['--no-skills', ...[...new Set(chosen.map(s => dirname(s.filePath)))].flatMap(dir => ['--skill', dir])];
-}
 // Anthropic keeps a prompt cache for five minutes by default. A lead that waits longer for its members
 // rewrites its whole context on every wake, and pi's idle cache warming does not run for the team's
 // virtual models, so ask for the one-hour cache unless the user chose a retention already.
@@ -99,6 +80,7 @@ const leanLead = [
   '- Look at an image yourself only when you must judge it for the user, and not the same image twice.',
   '- For a follow-up on the same files, resume the member that did the previous round instead of starting a fresh one that has to reread everything: find its exact run id with subagent action "status" or "children.list" (a "Mission" id is not a run id), then call action "resume" with that id and a message. Start a fresh member only for a different role, when resume is rejected, or when the previous one has a very large context.',
   '- Call team_peers only when you need addresses or states.',
+  '- When a task needs knowledge a role does not carry, search installed skills with team_skills and give that one member the extra skills through the subagent skill option. New skills are not installed during a team run; mention the gap in your report instead.',
 ].join('\n');
 
 export function start(cwd: string, p: Start, alias?: { key: string; names: string[]; description?: string; icon?: string }) {
@@ -117,7 +99,7 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
   const archive = join(root, 'archive');
   const id = locked(join(root, '.teams.lock'), () => {
     let name = p.name ?? alias?.key ?? `${p.preset.slice(0, 23)}-${randomBytes(4).toString('hex')}`;
-    const reserved = (candidate: string) => candidate === 'archive' || candidate === 'vendor';
+    const reserved = (candidate: string) => candidate === 'archive' || candidate === 'vendor' || candidate === 'stats';
     if (p.name === undefined && alias) {
       const prefix = 'refs/heads/pi-team/';
       const branches = new Set(git(repo, ['for-each-ref', '--format=%(refname)', prefix]).split('\n')
