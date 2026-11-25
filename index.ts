@@ -130,7 +130,12 @@ function guardDelegation(pi: ExtensionAPI, team: Team, presets: Presets, active:
     const block = (reason: string) => ({ block: true, reason });
     const options = input.options && typeof input.options === 'object' ? input.options : {};
     if (Object.hasOwn(input, 'model') || Object.hasOwn(options, 'model')) return block('Let the team role virtual model choose the physical model; do not pass model.');
-    if (typeof input.action === 'string' && input.agent === undefined && ['guide', 'status', 'steer', 'interrupt', 'stop'].includes(input.action)) return;
+    if (typeof input.action === 'string' && input.agent === undefined && ['guide', 'status', 'children.list', 'steer', 'interrupt', 'stop'].includes(input.action)) return;
+    // A resumed child keeps its team agent, model, tools and worktree; the member extension checks them again.
+    if (input.action === 'resume' && input.agent === undefined) {
+      if (['agent', 'model', 'cwd', 'worktree', 'runner', 'profile', 'machine', 'tasks', 'chain', 'script', 'extensions', 'subagentOnlyExtensions'].some(k => Object.hasOwn(input, k) || Object.hasOwn(options, k))) return block('Resume a team member with only its run id and a message.');
+      return;
+    }
     const prefix = `pi-team.${team.preset}-`;
     const agent = input.agent;
     let role = typeof agent === 'string' && agent.startsWith(prefix) ? agent.slice(prefix.length) : '';
@@ -193,6 +198,26 @@ export default async function piTeam(pi: ExtensionAPI) {
     if (orchestrator.readOnly) pi.on('tool_call', e => {
       if (e.toolName === 'write' || e.toolName === 'edit') return { block: true, reason: 'This orchestrator role is read-only.' };
     });
+    // Compact the lead while it waits rather than re-reading a huge context on every later turn.
+    // Context usage keeps the last response's size until a new response arrives, so judge again only
+    // after a turn has finished since the previous compaction.
+    const compactAt = Number(process.env.PI_TEAM_LEAD_COMPACT_TOKENS ?? 200_000);
+    let compacting = false;
+    let fresh = true;
+    if (compactAt > 0) {
+      pi.on('turn_end', () => { fresh = true; });
+      pi.on('agent_settled', (_e, ctx) => {
+        const tokens = ctx.getContextUsage()?.tokens;
+        if (compacting || !fresh || tokens == null || tokens < compactAt) return;
+        compacting = true;
+        fresh = false;
+        ctx.compact({
+          customInstructions: 'Keep the team goal and user instructions verbatim, every decision and user answer, each member key with its role, latest run id, state and latest result, open questions, commits, and file paths. Drop file contents, command output and image details already summarized.',
+          onComplete: () => { compacting = false; },
+          onError: e => { compacting = false; if (ctx.hasUI && !/nothing to compact/i.test(e.message)) ctx.ui.notify(`pi-team: lead compaction failed: ${e.message}`, 'warning'); },
+        });
+      });
+    }
     pi.registerTool({ name: 'team_report', label: 'Team report', description: 'Save the team summary and gathered outcomes to summary.md. Use status done on completion.',
       parameters: Type.Object({ summary: Type.String(), status: Type.String() }),
       async execute(_id, p) { const path = report(team, p.summary, p.status); if (p.status === 'done') lead.update('done'); return text(path); } });

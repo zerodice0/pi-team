@@ -112,7 +112,8 @@ flowchart TB
    - **Herdr 밖:** `git worktree add -b pi-team/<team> <repoParent>/worktrees/<repo>/team-<team> <ref>`
 4. `team.json`을 기록합니다.
 5. 팀장을 실행합니다.
-   - Herdr: `herdr pane run <pane> env PI_TEAM_ID=<team> PI_TEAM_ROLE=lead pi --model team/<preset>.orchestrator --append-system-prompt <teamdir>/lead-prompt.md "<목표>"`
+   - Herdr: `herdr pane run <pane> env PI_TEAM_ID=<team> PI_TEAM_ROLE=lead PI_CACHE_RETENTION=long pi --model team/<preset>.orchestrator --append-system-prompt <teamdir>/lead-prompt.md --no-skills --skill <dir>... "<목표>"`
+   - 사용량 관리: 1시간 캐시(가상 모델은 pi의 유휴 캐시 데우기 대상이 아님), 팀장 스킬 제한(`leadSkills` 또는 orchestrator `skills`), 문맥 절약 지시와 구성원 재개, 쉴 때 20만 토큰을 넘으면 자동 압축(`PI_TEAM_LEAD_COMPACT_TOKENS`). 근거는 craft-light 팀 분석(팀장 비용 69%, 캐시 재작성이 팀 비용의 45%)이다.
    - 밖: 같은 명령을 화면에 안내합니다.
 6. **정리:** `/team close <team>`은 다음 조건이 모두 충족될 때 진행합니다.
    - 팀장 프로세스가 종료되었거나 사용자가 확인함
@@ -135,7 +136,7 @@ flowchart TB
   - 수신 쪽 확장이 `fs.watch`(1초 polling 보조)로 감시합니다.
   - 작업 중이면 `sendMessage(…, {deliverAs:"steer"})`로 넣습니다.
   - idle 팀장은 `triggerTurn:true`로 바로 턴을 시작합니다(E2). idle 팀원은 다음 턴에 받습니다.
-- **도구:** `team_peers`, `team_send`, `team_inbox`, `team_wait(≤120s)`.
+- **도구:** `team_peers`, `team_send`, `team_inbox`, `team_wait(≤120s)`. `team_peers`는 상태와 주소만 반환합니다(끝난 구성원의 결과 전문은 넣지 않음).
 - **제한:**
   - hop 5회
   - 송신자당 분당 20건

@@ -1,6 +1,8 @@
-import { realpathSync, renameSync, rmSync } from 'node:fs';
+import { readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, basename, isAbsolute, join, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { getAgentDir, loadSkills } from '@earendil-works/pi-coding-agent';
 import { generateAgents, imageDisabled, readPresets, type Presets } from './presets.ts';
 import { appendLedger, checkIcon, defaultIcon, diffStat, exec, exists, getLead, getTeam, git, isLive, ledger, locked, log, members, mkdir, readText, root, teamDir, teams, writeAtomic, writeJson, type Team, type LedgerEntry } from './registry.ts';
 
@@ -69,6 +71,36 @@ export function dirtyState(repo: string) {
   const skipped = all.filter(path => !left.some(l => l.startsWith(path) || path.startsWith(l))).length;
   return { porcelain: [tracked, ...left.map(path => `?? ${path}`)].filter(Boolean).join('\n'), skipped };
 }
+// The lead coordinates; it does not need the whole skill catalogue in every request (79 skills were
+// about 45k characters of system prompt on each turn). Give it these skills, or the orchestrator's
+// own `skills` list, plus any skills the repository itself ships. `skills: ["*"]` keeps them all.
+export const leadSkills = ['fluent-korean', 'herdr-agent-messenger', 'pi-subagents'];
+export function leadSkillArgs(wanted: string[] | undefined, worktree: string) {
+  const names = wanted ?? leadSkills;
+  if (names.includes('*')) return [];
+  // loadSkills() alone reads only <agentDir>/skills and <cwd>/.pi/skills; pi's package manager also adds
+  // ~/.agents/skills, .agents/skills in the worktree, and the skills of installed packages (pi-subagents).
+  const agentDir = getAgentDir();
+  const packages = join(agentDir, 'npm', 'node_modules');
+  const packageDirs = (dir: string): string[] => { try { return readdirSync(dir, { withFileTypes: true }).filter(d => d.isDirectory() && !d.name.startsWith('.')).flatMap(d => d.name.startsWith('@') ? packageDirs(join(dir, d.name)) : [join(dir, d.name)]); } catch { return []; } };
+  const skillPaths = [join(homedir(), '.agents', 'skills'), join(worktree, '.agents', 'skills'), ...packageDirs(packages).map(dir => join(dir, 'skills'))].filter(exists);
+  const { skills } = loadSkills({ cwd: worktree, agentDir, skillPaths, includeDefaults: true });
+  const inRepo = (path: string) => { const rel = relative(worktree, path); return !!rel && !isAbsolute(rel) && !rel.startsWith('..'); };
+  const chosen = skills.filter(s => names.includes(s.name) || inRepo(s.filePath));
+  return ['--no-skills', ...[...new Set(chosen.map(s => dirname(s.filePath)))].flatMap(dir => ['--skill', dir])];
+}
+// Anthropic keeps a prompt cache for five minutes by default. A lead that waits longer for its members
+// rewrites its whole context on every wake, and pi's idle cache warming does not run for the team's
+// virtual models, so ask for the one-hour cache unless the user chose a retention already.
+export const cacheRetention = () => process.env.PI_CACHE_RETENTION || 'long';
+const leanLead = [
+  'Keep your own context small; it is re-read on every turn. Members do the reading, building and checking:',
+  '- Do not read source files, logs or long documents to review or verify work, and do not run builds, tests or captures yourself. Ask a member (scout, reviewer, qa-tester, vision) and work from its summary.',
+  '- Look at an image yourself only when you must judge it for the user, and not the same image twice.',
+  '- For a follow-up on the same files, resume the member that did the previous round instead of starting a fresh one that has to reread everything: find its exact run id with subagent action "status" or "children.list" (a "Mission" id is not a run id), then call action "resume" with that id and a message. Start a fresh member only for a different role, when resume is rejected, or when the previous one has a very large context.',
+  '- Call team_peers only when you need addresses or states.',
+].join('\n');
+
 export function start(cwd: string, p: Start, alias?: { key: string; names: string[]; description?: string; icon?: string }) {
   if (!p.goal.trim() || p.goal.includes('\0')) throw new Error('A goal is required.');
   if (p.icon !== undefined) checkIcon(p.icon, 'Team start');
@@ -144,11 +176,13 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
       `Delegate with the subagent tool only to these member agents, using the exact names. Pick the member whose description fits the work:\n${roleList(captured, p.preset).map(r => `- ${r}`).join('\n')}\nNever pass model, cwd, worktree, an external runner, or a script workflow. Use async children when members must exchange mail.`,
       'If a member fails with a recorded fallback and sideEffects=false, run that role again so routing skips the cooled model. If sideEffects=true, do not rerun it; report the failure and side effects to the user.',
       'Use team_peers to inspect members and team_send to collaborate. Use team_report to finalize the team summary. Do not merge or remove the worktree without the user.',
+      leanLead,
       captured[p.preset].orchestrator.prompt ?? '',
     ].join('\n\n'));
     writeJson(join(dir, 'team.json'), team);
     const extra = captured[p.preset].orchestrator.extensions?.flatMap(path => ['--extension', path]) ?? [];
-    const command = ['env', `PI_TEAM_ID=${id}`, 'PI_TEAM_ROLE=lead', 'pi', '--model', `team/${p.preset}.orchestrator`, '--append-system-prompt', promptPath, ...extra, '--', p.goal].map(quote).join(' ');
+    const skillArgs = leadSkillArgs(captured[p.preset].orchestrator.skills, team.worktree);
+    const command = ['env', `PI_TEAM_ID=${id}`, 'PI_TEAM_ROLE=lead', `PI_CACHE_RETENTION=${cacheRetention()}`, 'pi', '--model', `team/${p.preset}.orchestrator`, '--append-system-prompt', promptPath, ...skillArgs, ...extra, '--', p.goal].map(quote).join(' ');
     // Herdr passes pane run's command tail as shell text, not as an argv array.
     if (team.pane) exec('herdr', ['pane', 'run', team.pane, command], repo);
     return team.pane ? `Started ${id}: ${team.worktree} (${team.branch}), workspace ${team.workspace}, pane ${team.pane}.${skipNote}`

@@ -177,7 +177,14 @@ export function registerMailbox(pi: ExtensionAPI, getOwner: () => Address | unde
   pi.registerTool({ name: 'team_peers', label: 'Team peers', description: 'List your team addresses and live member states; leads may also see other leads.', parameters: Type.Object({}),
     async execute() {
       const a = owner();
-      return text(JSON.stringify({ self: a.key, lead: getLead(a.team), members: members(a.team), ...(a.key === 'lead' ? { otherLeads: teams().filter(t => t.id !== a.team).map(t => address({ team: t.id, key: 'lead' })) } : {}) }));
+      // States and addresses only: full rows carried every finished member's result, 14-25k characters a call.
+      const brief = (p: Participant) => ({ key: p.key, role: p.role, state: p.state, ...(p.model ? { model: p.model.split('/').pop() } : {}),
+        ...(p.tool && isLive(p) ? { tool: p.tool } : {}), ...(p.error ? { error: p.error.replace(/\s+/g, ' ').slice(0, 200) } : {}) });
+      const lead = getLead(a.team);
+      const rows = members(a.team);
+      return text(JSON.stringify({ self: a.key, team: a.team, lead: lead ? brief(lead) : 'not registered', live: rows.filter(isLive).map(brief),
+        finished: rows.filter(m => !isLive(m)).map(m => `${m.key} ${m.state}`),
+        ...(a.key === 'lead' ? { otherLeads: teams().filter(t => t.id !== a.team).map(t => address({ team: t.id, key: 'lead' })) } : {}) }));
     } });
   pi.registerTool({ name: 'team_send', label: 'Send team message', description: 'Send to a peer address. Use replyTo with the received message ID for a threaded reply.', parameters: sendParams,
     async execute(_id, p) { return text(JSON.stringify(send(owner(), p))); } });

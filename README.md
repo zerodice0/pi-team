@@ -73,6 +73,17 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 
 `mcp: ["rea"]`인 팀원은 [REA](https://github.com/morluto/rea)(`rea mcp`)를 씁니다. REA 도구는 260개가 넘고 정의가 수 MB이므로, 팀원에게는 중계 도구 세 개만 등록합니다. `rea_tools`는 이름과 설명으로 도구를 검색하고, `rea_tool_schema`는 한 도구의 입력 스키마를 보여 주며, `rea_call`은 도구 하나를 실행합니다. REA는 첫 호출 때 시작하고, 10분 동안 호출이 없으면 종료한 뒤 다음 호출 때 다시 시작합니다(열었던 대상은 닫히며, 결과에 재시작 안내가 붙습니다). 유휴 시간은 `PI_TEAM_REA_IDLE_MINUTES`로 바꾸고, `0`이면 유휴 종료를 끕니다. 호출 하나의 제한 시간은 1시간입니다. 필요한 것은 `rea`(`brew install rea`)이고, 네이티브 디컴파일에는 Ghidra와 JDK 25 이상이 필요합니다. 확장은 `GHIDRA_INSTALL_DIR`가 없으면 Homebrew(`opt/ghidra/libexec`)와 `/opt/ghidra`, `/usr/share/ghidra`에서 Ghidra를 찾고, `JAVA_HOME`이 25 미만이면 Homebrew `openjdk*`, `/Library/Java/JavaVirtualMachines`, `/usr/lib/jvm`에서 가장 새 JDK 25 이상을 골라 넘깁니다. Ghidra JVM은 REA가 종료할 때 함께 정리됩니다.
 
+### 사용량을 줄이는 기본 동작
+
+팀은 같은 문맥을 턴마다 다시 읽기 때문에, 사용량은 대부분 캐시 읽기와 캐시 재작성에서 나옵니다. pi-team은 다음을 기본으로 적용합니다.
+
+- **1시간 프롬프트 캐시:** 팀장은 `PI_CACHE_RETENTION=long`으로 실행되고, 구성원도 이 값을 물려받습니다. Anthropic의 기본 캐시는 5분이라, 구성원을 기다리느라 5분 넘게 쉰 팀장은 깨어날 때마다 문맥 전체를 다시 썼습니다. pi의 유휴 캐시 데우기는 팀의 가상 모델에서는 동작하지 않습니다. 이미 `PI_CACHE_RETENTION`을 지정했다면 그 값을 씁니다.
+- **팀장 스킬 제한:** 팀장은 `--no-skills`로 실행되고 `fluent-korean`, `herdr-agent-messenger`, `pi-subagents`와 저장소 자체 스킬만 받습니다. 전체 스킬 목록은 매 요청에 4만 자 넘게 실렸습니다. orchestrator 역할에 `skills`를 지정하면 그 목록을 쓰고, `["*"]`이면 모든 스킬을 줍니다.
+- **팀장 문맥 관리:** 팀장 프롬프트는 소스·로그·이미지를 직접 읽거나 빌드·테스트를 직접 하지 말고 구성원에게 맡기라고 지시합니다. 같은 파일을 이어서 다루는 후속 작업은 새 구성원 대신 이전 구성원을 재개(`subagent` action `resume`)하게 합니다. 재개는 `async`로 띄운 구성원에서 동작하며, 실행 ID는 `status`나 `children.list`로 확인합니다.
+- **팀장 자동 압축:** 팀장이 한 차례 응답을 마치고 쉴 때 문맥이 20만 토큰을 넘으면 압축합니다. 임계값은 `PI_TEAM_LEAD_COMPACT_TOKENS`로 바꾸고, `0`이면 끕니다.
+- **간결한 `team_peers`:** 팀장과 실행 중인 구성원의 키·역할·상태·모델·현재 도구, 끝난 구성원의 키와 상태만 반환합니다.
+- **구성원 읽기 규칙:** 큰 파일은 범위를 정해 읽고, 이미 읽은 파일과 이미지는 바뀌지 않았으면 다시 읽지 않게 합니다.
+
 Herdr 사이드바에 팀 정보를 보이려면 `~/.config/herdr/config.toml`에 토큰 줄을 추가하고 `herdr server reload-config`를 실행합니다.
 
 ```toml
