@@ -1,8 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { OverlayOptions, TuiMouseEvent } from '@earendil-works/pi-tui';
-import { visibleWidth } from '@earendil-works/pi-tui';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { status, teamLabel } from './board.ts';
+import { activity, clip, divider, edge, fg, glyph, headline, live, modelName, oneLine, row, short, wrap, type Info, type Line, type Segment } from './frame.ts';
+
+export { activity, diffShort, live, oneLine } from './frame.ts';
 import { readJson, root, teams, writeJson, type Participant } from './registry.ts';
 
 // A non-capturing side panel, so the user can keep typing while teams work.
@@ -22,75 +24,6 @@ const RESERVE = 5; // bottom rows kept clear for the widget, editor and footer
 const LIVE_ROWS = 5;
 const REFRESH_MS = 2000;
 const positionFile = join(root, 'panel.json');
-type Info = ReturnType<typeof status>;
-
-// Text uses name/label only (both pass 4.5:1 on the panel); dim and border carry rails and rules.
-const palette = {
-  panel: '#151820', border: '#2a3038', title: '#d4c090', name: '#e8ecf4', label: '#9ca3b0', dim: '#6b7280',
-  ok: '#00b4ff', good: '#00ff88', warn: '#ffb347', crit: '#ff4757',
-} as const;
-type Tone = Exclude<keyof typeof palette, 'panel'>;
-type Segment = [text: string, tone?: Tone, bold?: boolean];
-type Line = { left: Segment[]; right?: Segment[] };
-const rgb = (hex: string) => { const n = Number.parseInt(hex.slice(1), 16); return `${(n >> 16) & 255};${(n >> 8) & 255};${n & 255}`; };
-const fg = (tone: Tone, text: string, bold = false) => `${bold ? '\x1b[1m' : ''}\x1b[38;2;${rgb(palette[tone])}m${text}\x1b[39m${bold ? '\x1b[22m' : ''}`;
-const BG = `\x1b[48;2;${rgb(palette.panel)}m`;
-const BG_OFF = '\x1b[49m';
-
-const glyph: Record<string, [string, Tone]> = {
-  working: ['▶', 'ok'], waiting: ['◆', 'warn'], idle: ['○', 'label'], done: ['✓', 'good'],
-  failed: ['✗', 'crit'], stopped: ['■', 'label'], stale: ['!', 'warn'], starting: ['…', 'label'],
-};
-export const live = new Set(['working', 'waiting', 'idle', 'starting']);
-export const oneLine = (s: string) => s.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').replace(/\s+/g, ' ').trim();
-// Truncate plain text ourselves: truncateToWidth() inserts a full reset that would drop the panel background.
-function clip(text: string, width: number) {
-  if (width <= 0) return '';
-  if (visibleWidth(text) <= width) return text;
-  let out = '';
-  let used = 0;
-  for (const ch of text) {
-    const w = visibleWidth(ch);
-    if (used + w > width - 1) break;
-    out += ch; used += w;
-  }
-  return `${out}…`;
-}
-function wrap(text: string, width: number, lines: number) {
-  const out: string[] = [];
-  let rest = text;
-  while (rest && out.length < lines) {
-    if (visibleWidth(rest) <= width || out.length === lines - 1) { out.push(clip(rest, width)); break; }
-    let cut = 0;
-    let used = 0;
-    let space = -1;
-    const chars = [...rest];
-    for (let i = 0; i < chars.length; i++) {
-      used += visibleWidth(chars[i]);
-      if (used > width) break;
-      if (chars[i] === ' ') space = i;
-      cut = i + 1;
-    }
-    const at = space > width / 2 ? space : cut;
-    out.push(chars.slice(0, at).join('').trimEnd());
-    rest = chars.slice(at).join('').trimStart();
-  }
-  return out;
-}
-const short = (address?: string) => address?.split('@')[0] ?? '?';
-const modelName = (model?: string) => model?.split('/').pop()?.replace(/^claude-/, '') ?? '—';
-const tools: Record<string, string> = { team_wait: 'waiting for mail', team_send: 'sending mail', team_inbox: 'reading mail', team_peers: 'checking team', subagent: 'delegating', team_report: 'reporting' };
-const idleWords: Record<string, string> = { working: 'thinking', waiting: 'waiting for mail', idle: 'idle', done: 'done', failed: 'failed', stopped: 'stopped', starting: 'starting', stale: 'offline' };
-export function activity(p: { tool?: string; path?: string; error?: string }, state: string) {
-  if (p.tool) return tools[p.tool] ?? `${p.tool}${p.path ? ` ${basename(p.path)}` : ''}`;
-  return state === 'failed' && p.error ? `failed: ${oneLine(p.error)}` : idleWords[state] ?? state;
-}
-export function diffShort(diff: string) {
-  const plus = /(\d+) insertion/.exec(diff)?.[1];
-  const minus = /(\d+) deletion/.exec(diff)?.[1];
-  return plus || minus ? `+${plus ?? 0} −${minus ?? 0}` : diff === 'clean' ? 'no changes' : '';
-}
-
 const KEY = 10;
 const MODEL = 11;
 function memberLine(p: { key: string; model?: string; fallback?: boolean; tool?: string; path?: string; error?: string }, state: string): Line {
@@ -104,18 +37,10 @@ function memberLine(p: { key: string; model?: string; fallback?: boolean; tool?:
 }
 export function teamLines(d: Info, inner: number): Line[] {
   const rows = [...d.rows].sort((a, b) => Number(live.has(b.state)) - Number(live.has(a.state)) || (a.startedAt ?? 0) - (b.startedAt ?? 0));
-  const working = rows.filter(p => p.state === 'working' || p.state === 'waiting').length + d.pending.length;
-  const finished = rows.filter(p => !live.has(p.state)).length;
-  // The lead may sit idle while its members work; show the team as working then.
-  const teamState = working && (d.state === 'idle' || d.state === 'working') ? 'working' : d.state;
-  const [mark, tone] = glyph[teamState] ?? ['?', 'label'];
-  const summary = d.state === 'done' ? [`done`, diffShort(d.diff)].filter(Boolean).join(' · ')
-    : d.state === 'stale' ? 'lead offline'
-    : d.state === 'starting' ? 'starting'
-    : [working && `${working} working`, finished && `${finished} done`].filter(Boolean).join(' · ') || d.state;
+  const { mark, tone, summary, summaryTone } = headline(d);
   const lines: Line[] = [{
     left: [[mark, tone], [' '], [teamLabel(d.team), 'name', true], [`  ${d.team.description ? oneLine(d.team.description) : d.team.preset}`, 'label']],
-    right: [[summary, d.state === 'done' ? 'good' : d.state === 'stale' ? 'warn' : 'label']],
+    right: [[summary, summaryTone]],
   }];
   const goal = wrap(oneLine(d.team.goal), inner - 2, d.state === 'done' ? 1 : 2);
   lines.push(...goal.map(text => ({ left: [['  '], [text, 'name']] as Segment[] })));
@@ -184,26 +109,6 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
     else void ctx.ui.custom<void>((tui, _theme, _keys, done) => {
       rerender = () => tui.requestRender();
       close = () => done();
-      const paint = (segments: Segment[], width: number) => {
-        let used = 0;
-        let out = '';
-        for (const [text, tone, bold] of segments) {
-          const part = clip(text, width - used);
-          if (!part) break;
-          used += visibleWidth(part);
-          out += tone ? fg(tone, part, bold) : part;
-          if (part !== text) break;
-        }
-        return { out, used };
-      };
-      const row = (line: Line, width: number) => {
-        const inner = width - 4;
-        const right = line.right ? paint(line.right, Math.max(0, Math.floor(inner / 2))) : { out: '', used: 0 };
-        const left = paint(line.left, inner - right.used - (right.used ? 1 : 0));
-        const gap = ' '.repeat(Math.max(0, inner - left.used - right.used));
-        return `${BG}${fg('border', '│')} ${left.out}${gap}${right.out} ${fg('border', '│')}${BG_OFF}`;
-      };
-      const rule = (width: number, [l, r]: [string, string]) => `${BG}${fg('border', `${l}${'─'.repeat(Math.max(0, width - 2))}${r}`)}${BG_OFF}`;
       const blank: Line = { left: [] };
       return {
         render(width: number) {
@@ -233,14 +138,12 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
           const dragging = !!drag;
           const title = ` ${fg(dragging ? 'ok' : 'title', 'pi-team', true)} `;
           const note = data.length ? fg('label', ` ${[active && `${active} active`, data.length - active && `${data.length - active} done`].filter(Boolean).join(' · ')} `) : '';
-          const fill = Math.max(1, width - 2 - visibleWidth(title) - visibleWidth(note) - 2);
           const lines = [
-            `${BG}${fg('border', '╭─')}${title}${fg('border', '─'.repeat(fill))}${note}${fg('border', '─╮')}${BG_OFF}`,
+            edge(width, ['╭', '╮'], title, note),
             row(blank, width),
-            // Divide teams with plain rules: ├ and ┤ fall back to other fonts in some terminals and render broken.
-            ...body.map(line => line === 'rule' ? `${BG}${fg('border', '│')} ${fg('border', '─'.repeat(Math.max(0, width - 4)))} ${fg('border', '│')}${BG_OFF}` : row(line, width)),
+            ...body.map(line => line === 'rule' ? divider(width) : row(line, width)),
             row(blank, width),
-            rule(width, ['╰', '╯']),
+            edge(width, ['╰', '╯'], ''),
           ];
           return lines;
         },

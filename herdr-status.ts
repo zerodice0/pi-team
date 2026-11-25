@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { createConnection } from 'node:net';
 import { status } from './board.ts';
-import { activity, diffShort, live, oneLine } from './panel.ts';
+import { activity, diffShort, live, oneLine } from './frame.ts';
 import { getTeam, teamIcon, type Team } from './registry.ts';
 
 // The lead publishes who the team is and what it is doing as Herdr metadata tokens, so the
