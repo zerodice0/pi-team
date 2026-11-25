@@ -98,6 +98,9 @@ flowchart TB
 
 1. `/team start <preset> [--name N] [--base REF] [--from-dirty] -- <목표>`, 또는 메인 모델의 `team_start`.
 2. 이름을 검증합니다(`[a-z0-9-]{1,32}`, 중복 금지). 미커밋 변경이 있으면 `--from-dirty` 없이는 거부합니다.
+   - 추적하지 않는 파일(`??`) 가운데 시작 제외 목록에 맞는 경로는 이 검사에서 건너뜁니다. 목록은 gitignore 문법 파일이며 전역 `~/.pi/agent/teams/start-ignore`와 저장소별 `<repo>/.pi/teams/start-ignore`를 함께 씁니다. 판정은 `git ls-files --others --exclude-standard --directory --exclude-from=<목록>`에 맡깁니다. 도구가 만든 `.gradle/`, `devtools_options.yaml` 같은 파일을 위한 기능입니다.
+   - 추적하는 파일의 수정과, 목록에 없는 추적하지 않는 파일(커밋하지 않은 새 소스 등)은 지금처럼 막습니다. 팀은 커밋된 base에서 시작하므로 이런 변경은 팀에 들어가지 않습니다. 거부 오류에는 걸린 경로를 최대 10개 보여 줍니다.
+   - 저장소별 `start-ignore` 파일 자체는 커밋하기 전에도 시작을 막지 않습니다. 건너뛴 경로가 있으면 시작 결과에 그 개수를 적습니다. 목록은 `git status` 출력을 바꾸지 않습니다. 저장소에서 아예 숨기려면 `.git/info/exclude`를 씁니다.
 3. worktree를 만듭니다.
    - **Herdr 안**(`HERDR_PANE_ID` 존재): `herdr worktree create --cwd <repo> --branch pi-team/<team> --base <ref> --label "pi-team <team>" --no-focus`를 실행하고, 출력에서 workspace ID, pane ID, 경로를 얻습니다. 출력 형식은 구현할 때 실제로 확인합니다.
    - **Herdr 밖:** `git worktree add -b pi-team/<team> <repoParent>/worktrees/<repo>/team-<team> <ref>`

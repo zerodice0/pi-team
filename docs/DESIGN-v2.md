@@ -122,6 +122,9 @@ flowchart TB
 
 - `/team start`는 cwd의 git 저장소에서 `git worktree add -b pi-team/<team> <repoParent>/worktrees/<repo>/team-<team> HEAD`를 실행합니다. 위치는 pi-subagents의 native 위치 규칙에 맞춥니다.
   - 미커밋 변경이 있으면 기본값으로는 시작하지 않습니다. `--from-dirty`를 주면 경고한 뒤 HEAD 기준으로 시작합니다.
+  - 추적하지 않는 파일(`??`) 가운데 시작 제외 목록에 맞는 경로는 이 검사에서 건너뜁니다. 목록은 gitignore 문법 파일이며 전역 `~/.pi/agent/teams/start-ignore`와 저장소별 `<repo>/.pi/teams/start-ignore`를 함께 씁니다. 판정은 `git ls-files --others --exclude-standard --directory --exclude-from=<목록>`에 맡깁니다. 도구가 만든 `.gradle/`, `devtools_options.yaml` 같은 파일을 위한 기능입니다.
+  - 추적하는 파일의 수정과, 목록에 없는 추적하지 않는 파일(커밋하지 않은 새 소스 등)은 지금처럼 막습니다. 팀은 커밋된 base에서 시작하므로 이런 변경은 팀에 들어가지 않습니다. 거부 오류에는 걸린 경로를 최대 10개 보여 줍니다.
+  - 저장소별 `start-ignore` 파일 자체는 커밋하기 전에도 시작을 막지 않습니다. 건너뛴 경로가 있으면 시작 결과에 그 개수를 적습니다. 목록은 `git status` 출력을 바꾸지 않습니다. 저장소에서 아예 숨기려면 `.git/info/exclude`를 씁니다.
   - git 저장소가 아니면 worktree 없이 cwd를 공유하며, 쓰기 역할은 1명으로 제한합니다.
 - 팀장은 worktree를 `cwd`로 받아 async로 실행됩니다. 팀원은 `cwd`를 생략해 팀장의 cwd를 상속하고, `worktree: false`로 실행합니다. 팀원별 관리형 worktree는 쓰지 않습니다.
 - **팀 종료:** 팀장이 끝나도 남은 팀원 run이 없는지 RPC status로 확인한 뒤 `done`으로 표시합니다. worktree와 branch는 보존합니다.

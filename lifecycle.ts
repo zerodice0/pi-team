@@ -47,6 +47,28 @@ function closeHostWorkspace(team: Team) {
   herdr(team.repo, 'workspace', 'close', id);
   return ` Closed Herdr workspace ${id}.`;
 }
+// Names what blocked the start so the user can commit it or exclude it in git instead of guessing.
+export function dirtyList(porcelain: string, limit = 10) {
+  const lines = porcelain.split('\n').filter(Boolean);
+  const more = lines.length > limit ? [`... and ${lines.length - limit} more`] : [];
+  return ['Uncommitted or untracked paths:', ...lines.slice(0, limit).map(line => `  ${line.trim()}`), ...more].join('\n');
+}
+// Untracked files that tools create (.gradle/, IDE settings) should not block a start, but new
+// source files must: the team starts from the committed base and would silently miss them.
+// start-ignore files use gitignore syntax and only ever excuse untracked paths.
+export const startIgnoreFiles = (repo: string) => [join(root, 'start-ignore'), join(repo, '.pi', 'teams', 'start-ignore')].filter(exists);
+export function dirtyState(repo: string) {
+  const tracked = git(repo, ['status', '--porcelain', '--untracked-files=no']);
+  const untracked = (extra: string[]) => git(repo, ['ls-files', '-z', '--others', '--exclude-standard', '--directory', '--no-empty-directory', ...extra]).split('\0').filter(Boolean);
+  const all = untracked([]);
+  const files = startIgnoreFiles(repo);
+  // The repository's own start-ignore never blocks a start, even before it is committed.
+  const left = files.length && all.length ? untracked([...files.map(f => `--exclude-from=${f}`), '--exclude=/.pi/teams/start-ignore']) : all;
+  // --directory lists a directory as a whole while any untracked file inside it is not excluded,
+  // so an entry of the full list counts as skipped only when nothing at, above or below it is left.
+  const skipped = all.filter(path => !left.some(l => l.startsWith(path) || path.startsWith(l))).length;
+  return { porcelain: [tracked, ...left.map(path => `?? ${path}`)].filter(Boolean).join('\n'), skipped };
+}
 export function start(cwd: string, p: Start, alias?: { key: string; names: string[]; description?: string; icon?: string }) {
   if (!p.goal.trim() || p.goal.includes('\0')) throw new Error('A goal is required.');
   if (p.icon !== undefined) checkIcon(p.icon, 'Team start');
@@ -56,7 +78,9 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
   const base = p.base ?? 'HEAD';
   const baseCommit = git(repo, ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`]);
   const symbolic = git(repo, ['rev-parse', '--symbolic-full-name', '--end-of-options', base]).split('\n').find(x => x.startsWith('refs/heads/') || x.startsWith('refs/remotes/'));
-  if (!p.fromDirty && git(repo, ['status', '--porcelain'])) throw new Error('Working tree is dirty. Ask the user to confirm before retrying with fromDirty: true (CLI: --from-dirty); the team starts from the committed base only.');
+  const { porcelain: dirty, skipped } = p.fromDirty ? { porcelain: '', skipped: 0 } : dirtyState(repo);
+  if (dirty) throw new Error(`Working tree is dirty. Ask the user to confirm before retrying with fromDirty: true (CLI: --from-dirty); the team starts from the committed base only. Untracked files that tools generate can be listed in .pi/teams/start-ignore (gitignore syntax).\n${dirtyList(dirty)}`);
+  const skipNote = skipped ? ` Skipped ${skipped} untracked path${skipped === 1 ? '' : 's'} matched by start-ignore.` : '';
   // Allocate and reserve the ID together so concurrent starts cannot pick the same name.
   const archive = join(root, 'archive');
   const id = locked(join(root, '.teams.lock'), () => {
@@ -127,8 +151,8 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
     const command = ['env', `PI_TEAM_ID=${id}`, 'PI_TEAM_ROLE=lead', 'pi', '--model', `team/${p.preset}.orchestrator`, '--append-system-prompt', promptPath, ...extra, '--', p.goal].map(quote).join(' ');
     // Herdr passes pane run's command tail as shell text, not as an argv array.
     if (team.pane) exec('herdr', ['pane', 'run', team.pane, command], repo);
-    return team.pane ? `Started ${id}: ${team.worktree} (${team.branch}), workspace ${team.workspace}, pane ${team.pane}.`
-      : `Created ${id}: ${team.worktree} (${team.branch}). Launch the lead:\ncd ${quote(team.worktree)} && ${command}`;
+    return team.pane ? `Started ${id}: ${team.worktree} (${team.branch}), workspace ${team.workspace}, pane ${team.pane}.${skipNote}`
+      : `Created ${id}: ${team.worktree} (${team.branch}).${skipNote} Launch the lead:\ncd ${quote(team.worktree)} && ${command}`;
   } catch (e) {
     if (!made) rmSync(dir, { recursive: true });
     else if (!getTeam(id) && team) writeJson(join(dir, 'team.json'), team);
