@@ -162,6 +162,9 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
     visible: (w, h) => w >= WIDTH + 40 && h >= MARGIN + FRAME + MIN_BODY + RESERVE + 4,
   };
   const maxY = (rows: number) => Math.max(0, rows - RESERVE - FRAME - MIN_BODY - MARGIN);
+  // Offsets pi-tui can draw: column 0 through the right margin, row 0 through maxY.
+  const clampX = (x: number, cols: number) => Math.min(0, Math.max(-Math.max(0, cols - RIGHT - WIDTH), x));
+  const clampY = (y: number, rows: number) => Math.min(maxY(rows), Math.max(0, y));
   const save = () => { try { writeJson(positionFile, { v: 2, offsetX: options.offsetX ?? 0, offsetY: options.offsetY ?? DEFAULT_Y }); } catch { /* position is a convenience */ } };
   const rank = (d: Info) => d.team.id === current ? 0 : d.state === 'done' ? 2 : 1;
   // Heartbeats rewrite lead.json and members every two seconds without changing what the panel shows.
@@ -244,15 +247,15 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
         // Fullscreen mode routes mouse input to overlays; drag the title row to move the panel.
         handleMouse(event: TuiMouseEvent) {
           if (event.type === 'press' && event.button === 'left' && event.y === 0) {
-            drag = { x: event.screenX, y: event.screenY, ox: options.offsetX ?? 0, oy: options.offsetY ?? 0 };
+            // Start from where pi-tui actually drew the panel. A position saved in a larger terminal,
+            // or kept across a resize, lies outside the current range and would leave a dead zone.
+            drag = { x: event.screenX, y: event.screenY, ox: clampX(options.offsetX ?? 0, tui.terminal.columns), oy: clampY(options.offsetY ?? DEFAULT_Y, tui.terminal.rows) };
             return { capture: true };
           }
           if (!drag) return undefined;
           if (event.type === 'drag' || event.type === 'move') {
-            const cols = tui.terminal.columns;
-            const baseCol = cols - RIGHT - WIDTH;
-            options.offsetX = Math.min(0, Math.max(-baseCol, drag.ox + event.screenX - drag.x));
-            options.offsetY = Math.min(maxY(tui.terminal.rows), Math.max(0, drag.oy + event.screenY - drag.y));
+            options.offsetX = clampX(drag.ox + event.screenX - drag.x, tui.terminal.columns);
+            options.offsetY = clampY(drag.oy + event.screenY - drag.y, tui.terminal.rows);
             return { handled: true, capture: true, render: true };
           }
           if (event.type === 'release' || event.type === 'click') {
