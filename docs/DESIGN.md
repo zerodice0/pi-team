@@ -74,7 +74,10 @@ flowchart TB
   | vision | `openai-codex/gpt-6.2-sol:high` → `anthropic/claude-opus-5-5:high` | readOnly, 이미지 경로를 `read` |
   | image | `openai-codex/gpt-6.2-sol:medium` | `codex_generate_image` 도구, 결과는 `<worktree>/artifacts/` |
 
-- **역할 추가:** 사용자가 역할을 자유롭게 추가할 수 있습니다. 역할 속성은 `models`, `tools`, `extensions`, `readOnly`, `max`, `prompt`입니다.
+- **역할 추가:** 사용자가 역할을 자유롭게 추가할 수 있습니다. 역할 속성은 `models`, `description`, `skills`, `mcp`, `tools`, `extensions`, `readOnly`, `max`, `prompt`입니다.
+  - `description`은 agent의 description과 팀장 프롬프트의 역할 목록에 들어갑니다. 팀장은 이 설명을 보고 팀원을 고릅니다.
+  - `skills`는 agent frontmatter `skills:`로 들어가 그 팀원에게만 해당 스킬을 줍니다.
+  - `mcp`는 팀원 전용 MCP 서버입니다(현재 `blender`). pi-subagents는 `mcp:` 선택을 부모 세션이 이미 연결한 서버에서만 찾으므로, pi 내장 MCP 대신 팀원 전용 확장(`blender-mcp/extension.ts`, `subagentOnlyExtensions`)이 MCP 클라이언트가 되어 서버 도구를 일반 도구(`mcp__blender__<tool>`)로 등록합니다. 확장은 `blender-mcp/launch.py`를 실행하고, 런처는 빈 포트에 헤드리스 Blender(`harness.py`)와 같은 판의 mcp-for-blender 서버를 띄웁니다. 포그라운드와 백그라운드 팀원 모두에서 동작합니다.
 - **역할 agent 생성:** 확장이 `~/.pi/agent/agents/pi-team/<preset>/<role>.md`를 생성합니다. frontmatter는 `package: pi-team`, `name: <preset>-<role>`, `model: team/<preset>.<role>`이고, readOnly 역할은 `excludeTools: write, edit`로 둡니다. orchestrator는 agent 파일을 만들지 않습니다.
 - **virtual model 라우팅:**
   - `reason` 값이 `user` 또는 `continuation`이면, 인증이 있고 cooldown 중이 아닌 첫 후보를 고릅니다.

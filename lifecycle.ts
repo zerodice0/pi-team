@@ -18,7 +18,7 @@ const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 // Spell out the member agents: without the list, leads guess names such as pi-team.<preset>-member.
 export function roleList(presets: Presets, preset: string) {
   return Object.entries(presets[preset]).filter(([role]) => role !== 'orchestrator' && !(role === 'image' && imageDisabled()))
-    .map(([role, item]) => `pi-team.${preset}-${role}${[item.readOnly && 'read-only', item.max && `up to ${item.max} at once`].filter(Boolean).map(s => ` (${s})`).join('')}`);
+    .map(([role, item]) => `pi-team.${preset}-${role}${[item.readOnly && 'read-only', item.max && `up to ${item.max} at once`].filter(Boolean).map(s => ` (${s})`).join('')}${item.description ? `: ${item.description}` : ''}`);
 }
 
 // `herdr worktree create` opens a primary workspace for the repository when none exists.
@@ -141,7 +141,7 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
     const promptPath = join(dir, 'lead-prompt.md');
     writeAtomic(promptPath, [
       `You lead pi-team ${id} in ${team.worktree}. Talk directly to the user.`,
-      `Delegate with the subagent tool only to these member agents, using the exact names: ${roleList(captured, p.preset).join(', ')}. Never pass model, cwd, worktree, an external runner, or a script workflow. Use async children when members must exchange mail.`,
+      `Delegate with the subagent tool only to these member agents, using the exact names. Pick the member whose description fits the work:\n${roleList(captured, p.preset).map(r => `- ${r}`).join('\n')}\nNever pass model, cwd, worktree, an external runner, or a script workflow. Use async children when members must exchange mail.`,
       'If a member fails with a recorded fallback and sideEffects=false, run that role again so routing skips the cooled model. If sideEffects=true, do not rerun it; report the failure and side effects to the user.',
       'Use team_peers to inspect members and team_send to collaborate. Use team_report to finalize the team summary. Do not merge or remove the worktree without the user.',
       captured[p.preset].orchestrator.prompt ?? '',

@@ -1,11 +1,21 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { blenderTools, toolName } from './blender-mcp/extension.ts';
 import { exists, locked, log, mkdir, namePattern, names, readJson, readText, remove, root, teamDir, writeAtomic, writeJson } from './registry.ts';
 
-interface Role { models: string[]; tools?: string[]; extensions?: string[]; readOnly?: boolean; max?: number; prompt?: string }
+interface Role { models: string[]; description?: string; skills?: string[]; mcp?: string[]; tools?: string[]; extensions?: string[]; readOnly?: boolean; max?: number; prompt?: string }
+// MCP servers a role can ask for by name. Each one is an extension that only that role's members load,
+// so the main session and the lead never start it; the extension registers the server's tools.
+const mcpServers: Record<string, { extension: string; tools: string[]; prompt: string }> = {
+  blender: {
+    extension: join(dirname(fileURLToPath(import.meta.url)), 'blender-mcp', 'extension.ts'),
+    tools: blenderTools.map(toolName),
+    prompt: 'You have your own headless Blender (mcp-for-blender): run bpy code with mcp__blender__execute_blender_code, inspect with mcp__blender__get_scene_info and look at the result with mcp__blender__look. Save .blend files, renders and exports inside the team worktree; the scene is lost when you finish.',
+  },
+};
 export type Presets = Record<string, Record<string, Role>>;
 const sol = 'openai-codex/gpt-6.2-sol';
 const opus = 'anthropic/claude-opus-5-5:high';
@@ -36,6 +46,9 @@ function validate(value: Presets | undefined, relativeTo: string): Presets {
           (details.max !== undefined && (!Number.isSafeInteger(details.max) || details.max < 1)) ||
           (details.readOnly !== undefined && typeof details.readOnly !== 'boolean') ||
           (details.prompt !== undefined && typeof details.prompt !== 'string') ||
+          (details.description !== undefined && (typeof details.description !== 'string' || !details.description.trim() || /[\r\n]/.test(details.description))) ||
+          (details.skills !== undefined && (!Array.isArray(details.skills) || details.skills.some(s => typeof s !== 'string' || !/^[\w:.-]+$/.test(s)))) ||
+          (details.mcp !== undefined && (!Array.isArray(details.mcp) || details.mcp.some(s => typeof s !== 'string' || !Object.hasOwn(mcpServers, s)))) ||
           (details.tools !== undefined && (!Array.isArray(details.tools) || details.tools.some(t => typeof t !== 'string' || !/^[\w:.-]+$/.test(t)))) ||
           (details.extensions !== undefined && (!Array.isArray(details.extensions) || details.extensions.some(p => typeof p !== 'string' || !p || /[\r\n,]/.test(p))))) {
         throw new Error(`Invalid role: ${preset}.${role}`);
@@ -64,17 +77,20 @@ export const childEntry = fileURLToPath(new URL('./child.ts', import.meta.url));
 export function roleAgent(preset: string, role: string, item: Role) {
   const defaults = role === 'image' ? ['read', 'codex_generate_image'] : item.readOnly ? ['read', 'grep', 'find', 'ls'] : ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls'];
   const excludeTools = item.readOnly ? ['write', 'edit'] : [];
-  const tools = [...new Set([...(item.tools ?? defaults), ...mailTools,
+  const mcp = item.mcp ?? [];
+  const tools = [...new Set([...(item.tools ?? defaults), ...mailTools, ...mcp.flatMap(name => mcpServers[name].tools),
     ...(role === 'vision' ? ['read'] : []), ...(role === 'image' ? ['codex_generate_image'] : [])])]
     .filter(tool => !excludeTools.includes(tool));
-  const subagentOnlyExtensions = [...new Set([...(item.extensions ?? []), ...(role === 'image' ? [imageEntry] : [])])];
+  const subagentOnlyExtensions = [...new Set([...(item.extensions ?? []), ...mcp.map(name => mcpServers[name].extension), ...(role === 'image' ? [imageEntry] : [])])];
   const systemPrompt = [
     `You are the ${role} member. Stay inside the team worktree; use team_peers, team_send, team_inbox and team_wait to coordinate. Give the lead a concise final result.`,
     role === 'vision' ? 'Use `read` on the supplied image path and describe the actual visual content.' : '',
     role === 'image' ? 'Use codex_generate_image with save="custom", saveDir="artifacts", outputFormat="png". Report the saved PNG path or the exact tool error; do not substitute another image generator.' : '',
+    ...mcp.map(name => mcpServers[name].prompt),
     item.prompt?.trim(),
   ].filter(Boolean).join('\n\n');
-  return { description: `pi-team ${preset} ${role} member`, model: `team/${preset}.${role}`, tools, excludeTools, extensions: [], subagentOnlyExtensions, systemPrompt };
+  const description = `pi-team ${preset} ${role} member${item.description ? `: ${item.description.trim()}` : ''}`;
+  return { description, model: `team/${preset}.${role}`, tools, excludeTools, skills: item.skills ?? [], extensions: [], subagentOnlyExtensions, systemPrompt };
 }
 export function generateAgents(presets: Presets, target = join(getAgentDir(), 'agents', 'pi-team')) {
   mkdir(target);
@@ -85,7 +101,8 @@ export function generateAgents(presets: Presets, target = join(getAgentDir(), 'a
       if (role === 'orchestrator' || (role === 'image' && imageDisabled())) continue;
       const def = roleAgent(preset, role, item);
       const body = ['---', 'package: pi-team', `name: ${preset}-${role}`, `description: ${def.description}`, `model: ${def.model}`,
-        `tools: ${def.tools.join(', ')}`, ...(def.excludeTools.length ? [`excludeTools: ${def.excludeTools.join(', ')}`] : []), 'extensions: []',
+        `tools: ${def.tools.join(', ')}`, ...(def.excludeTools.length ? [`excludeTools: ${def.excludeTools.join(', ')}`] : []),
+        ...(def.skills.length ? [`skills: ${def.skills.join(', ')}`] : []), 'extensions: []',
         ...(def.subagentOnlyExtensions.length ? [`subagentOnlyExtensions: ${def.subagentOnlyExtensions.map(s => JSON.stringify(s)).join(', ')}`] : []),
         '---', '', managed, '', def.systemPrompt, ''].join('\n');
       live.add(`${role}.md`);

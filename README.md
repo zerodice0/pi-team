@@ -45,6 +45,29 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 
 - preset: `~/.pi/agent/teams/presets.json`, 또는 저장소별 `<repo>/.pi/teams/presets.json`
 - 별칭: `~/.pi/agent/teams/aliases.json`, 또는 `<repo>/.pi/teams/aliases.json`
+- 시작 제외 목록: `~/.pi/agent/teams/start-ignore`, 또는 `<repo>/.pi/teams/start-ignore`(gitignore 문법)
+
+### 역할 설정
+
+역할마다 `models`(fallback 순서) 외에 다음 속성을 쓸 수 있습니다.
+
+| 속성 | 뜻 |
+|---|---|
+| `description` | 한 줄 설명. 팀장이 역할을 고를 때 보는 목록과 agent 설명에 들어갑니다. |
+| `skills` | 팀원에게 줄 스킬 이름 목록. pi가 찾는 위치(`~/.agents/skills` 등)에 설치되어 있어야 합니다. |
+| `mcp` | 팀원 전용 MCP 서버 이름 목록. 지금은 `blender`만 있습니다. |
+| `tools`, `extensions`, `readOnly`, `max`, `prompt` | 도구 목록, 팀원 전용 확장, 읽기 전용 여부, 동시 실행 상한, 추가 프롬프트 |
+
+```json
+"modeler": {
+  "models": ["openai-codex/gpt-6.2-sol:high", "anthropic/claude-opus-5-5:high"],
+  "description": "3D work in its own headless Blender",
+  "skills": ["text-to-blender", "blender-modeling", "blender-uv-texturing"],
+  "mcp": ["blender"]
+}
+```
+
+`mcp: ["blender"]`인 팀원은 시작할 때 자기 전용 헤드리스 Blender와 [mcp-for-blender](https://github.com/ahujasid/mcp-for-blender) 서버를 빈 포트로 띄우고, 끝날 때 함께 종료합니다. 메인 세션과 팀장은 Blender를 띄우지 않으며, 여러 팀원이 동시에 각자의 Blender를 쓸 수 있습니다. 서버 도구는 `mcp__blender__execute_blender_code`, `get_scene_info`, `look`, `search_assets`, `import_asset`, `get_addon_status` 이름으로 등록됩니다. 필요한 것은 PATH의 `blender`(macOS는 `/Applications/Blender.app`도 찾음), `uv`(`uvx`), `python3`입니다. mcp-for-blender는 시작할 때마다 최신판을 받고, 서버와 Blender 애드온은 같은 판을 씁니다. Blender 출력은 `~/.cache/pi-team/blender-mcp/`에 남습니다.
 
 Herdr 사이드바에 팀 정보를 보이려면 `~/.config/herdr/config.toml`에 토큰 줄을 추가하고 `herdr server reload-config`를 실행합니다.
 
