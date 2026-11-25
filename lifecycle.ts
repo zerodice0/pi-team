@@ -2,9 +2,9 @@ import { realpathSync, renameSync, rmSync } from 'node:fs';
 import { dirname, basename, isAbsolute, join, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { generateAgents, imageDisabled, readPresets, type Presets } from './presets.ts';
-import { appendLedger, diffStat, exec, exists, getLead, getTeam, git, isLive, ledger, locked, log, members, mkdir, readText, root, teamDir, teams, writeAtomic, writeJson, type Team, type LedgerEntry } from './registry.ts';
+import { appendLedger, checkIcon, defaultIcon, diffStat, exec, exists, getLead, getTeam, git, isLive, ledger, locked, log, members, mkdir, readText, root, teamDir, teams, writeAtomic, writeJson, type Team, type LedgerEntry } from './registry.ts';
 
-export interface Start { preset: string; name?: string; base?: string; fromDirty?: boolean; goal: string }
+export interface Start { preset: string; name?: string; base?: string; fromDirty?: boolean; goal: string; icon?: string }
 interface HerdrCreated { workspace: { workspace_id: string }; root_pane: { pane_id: string }; worktree: { path: string } }
 function herdr<T>(cwd: string, ...args: string[]): T {
   const output = exec('herdr', args, cwd);
@@ -47,8 +47,9 @@ function closeHostWorkspace(team: Team) {
   herdr(team.repo, 'workspace', 'close', id);
   return ` Closed Herdr workspace ${id}.`;
 }
-export function start(cwd: string, p: Start, alias?: { key: string; names: string[] }) {
+export function start(cwd: string, p: Start, alias?: { key: string; names: string[]; description?: string; icon?: string }) {
   if (!p.goal.trim() || p.goal.includes('\0')) throw new Error('A goal is required.');
+  if (p.icon !== undefined) checkIcon(p.icon, 'Team start');
   const repo = realpathSync(git(cwd, ['rev-parse', '--show-toplevel']));
   const presets = readPresets(repo);
   if (!Object.hasOwn(presets, p.preset)) throw new Error(`Unknown preset: ${p.preset}`);
@@ -84,13 +85,13 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
   try {
     const worktree = join(dirname(repo), 'worktrees', basename(repo), `team-${id}`);
     team = { id, preset: p.preset, repo, worktree, branch, base, baseCommit, baseBranch: symbolic, goal: p.goal, createdAt: Date.now(),
-      alias: alias?.key, aliasLabel: alias?.names[0] };
+      alias: alias?.key, aliasLabel: alias?.names[0], icon: p.icon ?? alias?.icon ?? defaultIcon(id), description: alias?.description };
     mkdir(dirname(worktree));
     if (process.env.HERDR_PANE_ID) {
       const key = repoKey(repo);
       const primaries = () => repoWorkspaces(repo, key).filter(w => !w.worktree?.is_linked_worktree).map(w => w.workspace_id);
       const before = new Set(primaries());
-      const response = herdr<HerdrCreated>(repo, 'worktree', 'create', '--cwd', repo, '--branch', branch, '--base', baseCommit, '--path', worktree, '--label', `pi-team ${id}`, '--no-focus');
+      const response = herdr<HerdrCreated>(repo, 'worktree', 'create', '--cwd', repo, '--branch', branch, '--base', baseCommit, '--path', worktree, '--label', `${team.icon} pi-team ${id}`, '--no-focus');
       team.worktree = response.worktree.path; team.workspace = response.workspace.workspace_id; team.pane = response.root_pane.pane_id;
       try {
         const after = primaries();
@@ -243,7 +244,7 @@ export function splitGoal(args: string, usage: string) {
   return { target, goal };
 }
 export function parseStart(args: string): Start {
-  const { target, goal } = splitGoal(args, 'Usage: /team start <preset or alias> [--name N] [--base REF] [--from-dirty] -- <goal>');
+  const { target, goal } = splitGoal(args, 'Usage: /team start <preset or alias> [--name N] [--base REF] [--icon EMOJI] [--from-dirty] -- <goal>');
   const firstFlag = /(?:^|\s)--\S/u.exec(target);
   const preset = firstFlag ? target.slice(0, firstFlag.index).trim() : target;
   if (!preset) throw new Error('A preset or alias is required.');
@@ -256,6 +257,7 @@ export function parseStart(args: string): Start {
     seen.add(flag);
     if (flag === '--from-dirty') result.fromDirty = true;
     else if ((flag === '--name' || flag === '--base') && tokens[i + 1] && !tokens[i + 1].startsWith('--')) result[flag === '--name' ? 'name' : 'base'] = tokens[++i];
+    else if (flag === '--icon' && tokens[i + 1] && !tokens[i + 1].startsWith('--')) result.icon = checkIcon(tokens[++i], 'Team start');
     else throw new Error(`Invalid start option: ${flag}`);
   }
   return result;

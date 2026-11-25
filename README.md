@@ -16,6 +16,7 @@
 - **팀 패널(`ctrl+shift+t`·`alt+t`):** 대화를 계속하면서 볼 수 있도록 화면 오른쪽에 떠 있는 패널입니다. 팀마다 진행 요약, 목표, 메인이 마지막으로 보낸 위임, 팀장과 팀원이 지금 하는 일과 모델, 마지막 메시지를 보여 줍니다. fullscreen 모드(pi 기본값)에서는 제목 줄을 마우스로 끌어 옮길 수 있고, 옮긴 위치는 기억합니다.
 - **Herdr 연동:** [Herdr](https://herdr.dev) 안에서 실행하면 팀마다 `herdr worktree create`로 workspace를 만들고 팀장을 실행합니다. Herdr 밖에서는 worktree만 만들고 팀장 실행 명령을 안내합니다.
 - **팀 별칭:** 「그래픽 팀에게 위임해 줘」처럼 자연어로 팀을 지정해 위임할 수 있습니다.
+- **팀 아이콘과 Herdr 표시:** 팀마다 아이콘(별칭의 `icon`, `--icon`, 또는 기본 동물 이모지)과 설명이 붙습니다. Herdr 안의 팀장은 사이드바용 토큰 `$team`(무슨 팀인지)과 `$team_now`(지금 하는 일)를 보고합니다.
 
 ## 설치
 
@@ -31,7 +32,7 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 
 | 명령 | 설명 |
 |---|---|
-| `/team start <preset or alias> [--name X] [--base REF] -- <목표>` | 팀을 만들고 팀장을 띄웁니다. |
+| `/team start <preset or alias> [--name X] [--base REF] [--icon 🎨] -- <목표>` | 팀을 만들고 팀장을 띄웁니다. |
 | `/team delegate <alias> -- <작업>` | 별칭에 해당하는 기존 팀에 작업을 보내고, 팀이 없으면 새로 만듭니다. |
 | `/team board` | 상태판 overlay를 엽니다. |
 | `/team panel [on\|off\|reset]` · `ctrl+shift+t` · `alt+t` | 팀 패널을 켜거나 끕니다. 패널이 떠 있어도 입력은 그대로 할 수 있습니다. `reset`은 패널을 원래 위치로 되돌립니다. |
@@ -44,6 +45,20 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 
 - preset: `~/.pi/agent/teams/presets.json`, 또는 저장소별 `<repo>/.pi/teams/presets.json`
 - 별칭: `~/.pi/agent/teams/aliases.json`, 또는 `<repo>/.pi/teams/aliases.json`
+
+Herdr 사이드바에 팀 정보를 보이려면 `~/.config/herdr/config.toml`에 토큰 줄을 추가하고 `herdr server reload-config`를 실행합니다.
+
+```toml
+[ui.sidebar.agents]
+rows = [
+  ["state_icon", "agent"],
+  [{ token = "$team", fg = "#d4c090", bold = true }],
+  [{ token = "$team_now", fg = "#9ca3b0" }],
+]
+
+[ui.sidebar.spaces]
+rows = [["state_icon", "workspace"], ["branch", "git_status"], [{ token = "$team_now", fg = "#9ca3b0" }]]
+```
 
 자세한 형식은 [`docs/DESIGN.md`](docs/DESIGN.md)를 참고하세요.
 

@@ -32,10 +32,10 @@ const BG_OFF = '\x1b[49m';
 
 const glyph: Record<string, [string, Tone]> = {
   working: ['▶', 'ok'], waiting: ['◆', 'warn'], idle: ['○', 'label'], done: ['✓', 'good'],
-  failed: ['✗', 'crit'], stopped: ['■', 'label'], stale: ['!', 'warn'], starting: ['◌', 'label'],
+  failed: ['✗', 'crit'], stopped: ['■', 'label'], stale: ['!', 'warn'], starting: ['…', 'label'],
 };
-const live = new Set(['working', 'waiting', 'idle', 'starting']);
-const oneLine = (s: string) => s.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').replace(/\s+/g, ' ').trim();
+export const live = new Set(['working', 'waiting', 'idle', 'starting']);
+export const oneLine = (s: string) => s.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').replace(/\s+/g, ' ').trim();
 // Truncate plain text ourselves: truncateToWidth() inserts a full reset that would drop the panel background.
 function clip(text: string, width: number) {
   if (width <= 0) return '';
@@ -74,11 +74,11 @@ const short = (address?: string) => address?.split('@')[0] ?? '?';
 const modelName = (model?: string) => model?.split('/').pop()?.replace(/^claude-/, '') ?? '—';
 const tools: Record<string, string> = { team_wait: 'waiting for mail', team_send: 'sending mail', team_inbox: 'reading mail', team_peers: 'checking team', subagent: 'delegating', team_report: 'reporting' };
 const idleWords: Record<string, string> = { working: 'thinking', waiting: 'waiting for mail', idle: 'idle', done: 'done', failed: 'failed', stopped: 'stopped', starting: 'starting', stale: 'offline' };
-function activity(p: { tool?: string; path?: string; error?: string }, state: string) {
+export function activity(p: { tool?: string; path?: string; error?: string }, state: string) {
   if (p.tool) return tools[p.tool] ?? `${p.tool}${p.path ? ` ${basename(p.path)}` : ''}`;
   return state === 'failed' && p.error ? `failed: ${oneLine(p.error)}` : idleWords[state] ?? state;
 }
-function diffShort(diff: string) {
+export function diffShort(diff: string) {
   const plus = /(\d+) insertion/.exec(diff)?.[1];
   const minus = /(\d+) deletion/.exec(diff)?.[1];
   return plus || minus ? `+${plus ?? 0} −${minus ?? 0}` : diff === 'clean' ? 'no changes' : '';
@@ -86,12 +86,13 @@ function diffShort(diff: string) {
 
 const KEY = 10;
 const MODEL = 11;
-function memberLine(rail: string, p: { key: string; model?: string; fallback?: boolean; tool?: string; path?: string; error?: string }, state: string): Line {
+function memberLine(p: { key: string; model?: string; fallback?: boolean; tool?: string; path?: string; error?: string }, state: string): Line {
   const [mark, tone] = glyph[state] ?? ['?', 'label'];
   const busy = state === 'working' || state === 'waiting';
   return {
-    left: [['  '], [`${rail} `, 'dim'], [mark, tone], [' '], [clip(p.key, KEY).padEnd(KEY), 'name'], [' '], [activity(p, state), busy ? 'name' : 'label']],
-    right: [...(p.fallback ? [['⇢', 'warn'] as Segment] : []), [clip(modelName(p.model), MODEL), 'label']],
+    left: [['    '], [mark, tone], [' '], [clip(p.key, KEY).padEnd(KEY), 'name'], [' '], [activity(p, state), busy ? 'name' : 'label']],
+    // A fallback model is shown in amber rather than with an extra glyph.
+    right: [[clip(modelName(p.model), MODEL), p.fallback ? 'warn' : 'label']],
   };
 }
 export function teamLines(d: Info, inner: number): Line[] {
@@ -106,15 +107,15 @@ export function teamLines(d: Info, inner: number): Line[] {
     : d.state === 'starting' ? 'starting'
     : [working && `${working} working`, finished && `${finished} done`].filter(Boolean).join(' · ') || d.state;
   const lines: Line[] = [{
-    left: [[mark, tone], [' '], [teamLabel(d.team), 'name', true], [`  ${d.team.preset}`, 'label']],
+    left: [[mark, tone], [' '], [teamLabel(d.team), 'name', true], [`  ${d.team.description ? oneLine(d.team.description) : d.team.preset}`, 'label']],
     right: [[summary, d.state === 'done' ? 'good' : d.state === 'stale' ? 'warn' : 'label']],
   }];
   const goal = wrap(oneLine(d.team.goal), inner - 2, d.state === 'done' ? 1 : 2);
   lines.push(...goal.map(text => ({ left: [['  '], [text, 'name']] as Segment[] })));
   if (d.state === 'done') return lines;
   const followUp = d.sent.filter(e => e.from === 'main' && e.to === `lead@${d.team.id}`).at(-1);
-  if (followUp?.body) lines.push({ left: [['  ↳ ', 'dim'], [oneLine(followUp.body), 'label']] });
-  const people: { p: Parameters<typeof memberLine>[1]; state: string }[] = [
+  if (followUp?.body) lines.push({ left: [['  + ', 'dim'], [oneLine(followUp.body), 'label']] });
+  const people: { p: Parameters<typeof memberLine>[0]; state: string }[] = [
     ...(d.lead ? [{ p: { ...d.lead, key: 'lead' }, state: d.state }] : []),
     ...rows.filter(p => live.has(p.state)).map(p => ({ p, state: p.state })),
     ...d.pending.map(p => ({ p: { key: p.role, model: p.model }, state: 'starting' })),
@@ -122,16 +123,13 @@ export function teamLines(d: Info, inner: number): Line[] {
   const done = rows.filter(p => !live.has(p.state));
   const shown = people.slice(0, LIVE_ROWS);
   const tail: Line[] = [];
-  if (people.length > shown.length) tail.push({ left: [['  '], ['├ ', 'dim'], [`+${people.length - shown.length} more live`, 'label']] });
+  if (people.length > shown.length) tail.push({ left: [['      '], [`+${people.length - shown.length} more live`, 'label']] });
   // With nothing live, finished members are the story; otherwise fold them into one line.
   if (done.length && people.length <= 1 && done.length <= LIVE_ROWS - shown.length) shown.push(...done.map(p => ({ p, state: p.state })));
-  else if (done.length) tail.push({ left: [['  '], ['├ ', 'dim'], [glyph.done[0], 'good'], [' '], [`${done.length} finished: ${done.map(p => p.key).join(', ')}`, 'label']] });
-  const members = [...shown.map(({ p, state }) => memberLine('├', p, state)), ...tail];
-  if (members.length) {
-    const last = members[members.length - 1];
-    last.left = last.left.map(([text, t, b], i) => i === 1 ? ['╰ ', t, b] : [text, t, b]);
-    lines.push(...members);
-  } else lines.push({ left: [['  '], ['╰ ', 'dim'], ['lead has not started yet', 'label']] });
+  else if (done.length) tail.push({ left: [['    '], [glyph.done[0], 'good'], [' '], [`${done.length} finished: ${done.map(p => p.key).join(', ')}`, 'label']] });
+  const members = [...shown.map(({ p, state }) => memberLine(p, state)), ...tail];
+  if (members.length) lines.push(...members);
+  else lines.push({ left: [['    '], ['lead has not started yet', 'label']] });
   const mail = d.sent.filter(e => e.from !== 'main').at(-1);
   if (mail) lines.push({ left: [['  ✉ ', 'dim'], [`${short(mail.from)} → ${short(mail.to)}`, 'label'], ['  '], [oneLine(mail.subject ?? mail.body ?? ''), 'label']] });
   return lines;
@@ -217,7 +215,8 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
           const lines = [
             `${BG}${fg('border', '╭─')}${title}${fg('border', '─'.repeat(fill))}${note}${fg('border', '─╮')}${BG_OFF}`,
             row(blank, width),
-            ...body.map(line => line === 'rule' ? rule(width, ['├', '┤']) : row(line, width)),
+            // Divide teams with plain rules: ├ and ┤ fall back to other fonts in some terminals and render broken.
+            ...body.map(line => line === 'rule' ? `${BG}${fg('border', '│')} ${fg('border', '─'.repeat(Math.max(0, width - 4)))} ${fg('border', '│')}${BG_OFF}` : row(line, width)),
             row(blank, width),
             rule(width, ['╰', '╯']),
           ];

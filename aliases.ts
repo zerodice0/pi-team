@@ -1,10 +1,10 @@
 import { join } from 'node:path';
 import { start, type Start } from './lifecycle.ts';
 import { send } from './mailbox.ts';
-import { getLead, isLive, leadState, locked, namePattern, readJson, root, teams, type Team } from './registry.ts';
+import { checkIcon, getLead, isLive, leadState, locked, namePattern, readJson, root, teams, type Team } from './registry.ts';
 import type { Presets } from './presets.ts';
 
-interface Alias { preset: string; names: string[]; description: string; base?: string }
+interface Alias { preset: string; names: string[]; description: string; base?: string; icon?: string }
 interface AliasTarget extends Alias { key: string }
 export interface TeamTargets {
   aliases: Map<string, AliasTarget>;
@@ -27,14 +27,14 @@ export function readTargets(cwd: string, presets: Presets): TeamTargets {
   for (const [key, raw] of Object.entries(config)) {
     if (!namePattern.test(key)) throw new Error(`Invalid team alias key: ${key}. Use 1–32 lowercase letters, digits or hyphens.`);
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`Team alias ${key} must be an object.`);
-    const { preset, names, description, base } = raw as Record<string, unknown>;
+    const { preset, names, description, base, icon } = raw as Record<string, unknown>;
     if (typeof preset !== 'string' || !targets.presets.has(preset)) throw new Error(`Team alias ${key} refers to unknown preset: ${String(preset)}.`);
     if (!Array.isArray(names) || !names.length || names.some(name => typeof name !== 'string' || /[\x00-\x1f\x7f-\x9f]/u.test(name) || !normalized(name))) {
       throw new Error(`Team alias ${key} needs a nonempty list of names that remain nonempty after normalization.`);
     }
     if (typeof description !== 'string' || !description.trim()) throw new Error(`Team alias ${key} needs a nonempty description.`);
     if (base !== undefined && (typeof base !== 'string' || !base.trim() || /\s|\0/u.test(base))) throw new Error(`Team alias ${key} has an invalid base ref.`);
-    const alias: AliasTarget = { key, preset, names, description, base };
+    const alias: AliasTarget = { key, preset, names, description, base, icon: icon === undefined ? undefined : checkIcon(icon, `Team alias ${key}`) };
     targets.aliases.set(key, alias);
     for (const label of [key, ...names]) {
       const name = normalized(label);
@@ -80,7 +80,7 @@ export function showAliases(targets: TeamTargets) {
   const current = currentTeams();
   return [...targets.aliases.values()].map(a => {
     const team = current.get(a.key);
-    return `${a.key} (${a.names.join(', ')}) → ${a.preset} | ${team ? `${team.id} (${liveStatus(team)})` : 'no current team'} | ${a.description}`;
+    return `${a.icon ? `${a.icon} ` : ''}${a.key} (${a.names.join(', ')}) → ${a.preset} | ${team ? `${team.id} (${liveStatus(team)})` : 'no current team'} | ${a.description}`;
   }).join('\n') || 'No team aliases configured.';
 }
 

@@ -1,6 +1,7 @@
 import { appendFileSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { execFileSync } from 'node:child_process';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 
@@ -17,6 +18,20 @@ export interface Team {
   /** Primary Herdr workspace that `herdr worktree create` opened for this repository on pi-team's behalf. */
   hostWorkspace?: string;
   alias?: string; aliasLabel?: string;
+  /** One emoji or symbol that identifies the team in the panel, board, widget and Herdr. */
+  icon?: string;
+  /** What the team is for, taken from its alias description. */
+  description?: string;
+}
+// Animals rather than coloured squares or circles, which HAM already uses for agent identity.
+const defaultIcons = ['🦊', '🐙', '🦉', '🐝', '🦀', '🐳', '🦄', '🐢', '🦜', '🐧', '🦋', '🐬', '🦔', '🐞', '🦁', '🐼'];
+export const defaultIcon = (id: string) => defaultIcons[createHash('sha256').update(id).digest()[0] % defaultIcons.length];
+export const teamIcon = (team: Team) => team.icon ?? defaultIcon(team.id);
+export function checkIcon(icon: unknown, where: string) {
+  if (typeof icon !== 'string' || !icon || icon.length > 16 || /[\s\x00-\x1f\x7f-\x9f]/u.test(icon) || visibleWidth(icon) < 1 || visibleWidth(icon) > 2) {
+    throw new Error(`${where}: icon must be one emoji or symbol at most two columns wide.`);
+  }
+  return icon;
 }
 export interface Participant {
   key: string; role: string; pid: number; sessionId: string; sessionFile?: string; at: number;

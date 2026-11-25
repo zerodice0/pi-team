@@ -135,23 +135,31 @@ flowchart TB
 
 ## 7. 상태판
 
-- **widget**(팀이 있을 때만 한 줄): `teams: A ▶ 4/5 ✉3 · B ✓ done (+120 -14)`
+- **팀 정체성:** 팀마다 아이콘(`team.json`의 `icon`)과 설명(`description`)을 둡니다.
+  - 아이콘은 `/team start --icon <이모지>` 또는 `team_start`의 `icon`, 별칭의 `icon`, 팀 ID에서 정해지는 기본 동물 이모지 순으로 정합니다. HAM이 에이전트 식별에 쓰는 색 사각형과 겹치지 않도록 기본값은 동물로 둡니다. 두 칸 이하의 글자 하나만 받습니다.
+  - 설명은 별칭의 `description`입니다.
+  - widget, board, 팀 패널의 팀 이름 앞에 아이콘을 붙이고, Herdr worktree workspace 이름을 `<아이콘> pi-team <team>`으로 만듭니다.
+- **Herdr 사이드바:** Herdr 안의 팀장은 2초마다(바뀔 때만) 자기 pane과 팀 workspace에 출처 `pi-team`으로 메타데이터 토큰 두 개를 보고하고, 종료할 때 지웁니다.
+  - `$team`: 아이콘, 팀 이름, 별칭 이름, 설명(예: `🎨 graphics 그래픽 · UI 시안·이미지·시각 검토`)
+  - `$team_now`: 지금 하는 일(예: `task-1 bash · reviewer-1 waiting for mail · 1 done`, 끝나면 `✓ done · +4 −0`)
+  - 토큰은 pane 단위의 평면 맵이므로 pi-team 고유 이름만 쓰고, HAM의 `display_agent`·테두리·토큰은 건드리지 않습니다. 사이드바에 표시하려면 Herdr 설정의 `[ui.sidebar.agents] rows`에 `$team`·`$team_now`, `[ui.sidebar.spaces] rows`에 `$team_now` 줄을 추가합니다. 토큰이 없는 행은 줄이 사라집니다.
+- **widget**(팀이 있을 때만 한 줄): `teams: 🎨 A ▶ 4/5 ✉3 · 🐙 B ✓ done (+120 -14)`
 - **`/team board` overlay**(모든 모드에서 사용 가능, 레지스트리 파일만 읽음, 열려 있는 동안 2초마다 갱신):
   1. **Teams 화면:** 이름, preset, 상태(lead heartbeat로 판정, 10초 동안 없으면 `stale`), 목표, 저장소, worktree 경로, branch, 위치(Herdr workspace 또는 `external`), diff stat, 멤버 수, 메시지 수.
-  2. **Team 화면:** 목표와 각 구성원의 역할, member key, 실제 모델(fallback이면 `⇢`), 상태, 현재 도구와 경로, 메시지 S/R, 토큰. 아래에 최근 메시지 5개를 보여 줍니다.
+  2. **Team 화면:** 목표와 각 구성원의 역할, member key, 실제 모델(fallback이면 `(fallback)`), 상태, 현재 도구와 경로, 메시지 S/R, 토큰. 아래에 최근 메시지 5개를 보여 줍니다.
   3. **Messages 화면:** ledger를 스레드 단위로 보여 줍니다(`replyTo`로 묶음).
   4. **Summary 화면:** `summary.md`를 보여 줍니다.
 - **키:** `↑↓`/`Enter`로 이동, `Tab`으로 화면 전환, `s`로 팀장에게 보내기, `Esc`로 닫기.
 - **팀 패널**(`/team panel [on|off|reset]`, `ctrl+shift+t`·`alt+t`, 메인과 팀장 모드):
   - 입력을 가져가지 않는(`nonCapturing`) overlay입니다. 오른쪽 위 quota 패널(약 10줄) 아래인 11번째 줄부터 너비 50으로 표시하고, 터미널이 좁거나(너비 90 미만) 낮으면(23줄 미만) 숨깁니다.
   - 팀마다 다음 순서로 보여 줍니다.
-    1. 머리줄: 상태 기호, 팀 이름(굵게), preset, 오른쪽 끝에 진행 요약(`2 working · 1 done`, 끝난 팀은 `done · +4 −0`, 팀장이 응답하지 않으면 `lead offline`). 팀장이 idle이어도 팀원이 작업 중이면 작업 중으로 표시합니다.
+    1. 머리줄: 상태 기호, 아이콘과 팀 이름(굵게), 설명(없으면 preset), 오른쪽 끝에 진행 요약(`2 working · 1 done`, 끝난 팀은 `done · +4 −0`, 팀장이 응답하지 않으면 `lead offline`). 팀장이 idle이어도 팀원이 작업 중이면 작업 중으로 표시합니다.
     2. 목표: 최대 두 줄로 줄바꿈합니다.
-    3. `↳` 줄: 메인이 마지막으로 보낸 위임(`main → lead@<team>`)이 있을 때만 표시합니다.
-    4. 팀원 트리(`├`, `╰`): 팀장과 실행 중인 팀원을 최대 5줄 보여 줍니다. 각 줄은 상태 기호, 이름, 지금 하는 일(`bash`, `read calc.py`, `waiting for mail` 등), 오른쪽 끝의 모델입니다(fallback이면 `⇢`). 실행 중인 팀원이 있으면 끝난 팀원은 `✓ 3 finished: …` 한 줄로 접습니다.
+    3. `+` 줄: 메인이 마지막으로 보낸 위임(`main → lead@<team>`)이 있을 때만 표시합니다.
+    4. 팀원 목록(들여쓰기): 팀장과 실행 중인 팀원을 최대 5줄 보여 줍니다. 각 줄은 상태 기호, 이름, 지금 하는 일(`bash`, `edit Hero.tsx`, `waiting for mail` 등), 오른쪽 끝의 모델입니다(fallback이면 주황색). 실행 중인 팀원이 있으면 끝난 팀원은 `✓ 3 finished: …` 한 줄로 접습니다.
     5. `✉` 줄: 마지막 팀 메시지입니다.
-  - 끝난 팀은 머리줄과 목표 한 줄만 보여 줍니다. 팀 사이는 테두리와 이어지는 구분선(`├──┤`)으로 나눕니다. 화면에 다 들어가지 않으면 남은 팀 수를 `+N more teams · /team board`로 안내합니다.
-  - 글자는 대비 4.5:1 이상인 `#e8ecf4`(주 정보)와 `#9ca3b0`(보조 정보)만 쓰고, `#6b7280`은 트리 선과 구분 기호에만 씁니다.
+  - 끝난 팀은 머리줄과 목표 한 줄만 보여 줍니다. 팀 사이는 테두리 안쪽의 가로선(`│ ──── │`)으로 나눕니다. 화면에 다 들어가지 않으면 남은 팀 수를 `+N more teams · /team board`로 안내합니다.
+  - 글자는 대비 4.5:1 이상인 `#e8ecf4`(주 정보)와 `#9ca3b0`(보조 정보)만 쓰고, `#6b7280`은 구분 기호에만 씁니다. `├`, `┤`, `◌`, `↳`, `⇢`처럼 기본 글꼴에 없어 대체 글꼴로 그려지는 글자는 쓰지 않습니다. 실제로 `├`가 짧게 끊겨 그려지는 터미널이 있었습니다.
   - fullscreen 모드(pi 기본값)에서는 제목 줄을 마우스로 끌어 옮깁니다. 위치는 오른쪽 위 기준 offset으로 `~/.pi/agent/teams/panel.json`에 저장하며, 끄는 동안 제목이 파란색으로 바뀝니다. regular 모드에서는 터미널이 마우스를 처리하므로 옮길 수 없습니다. `/team panel reset`은 원래 위치로 되돌립니다.
   - quota 패널(`quota-panel.ts`)과 같은 titanium 팔레트와 틀(배경 `#151820`, 테두리 `#2a3038`, 굵은 금색 제목, 위아래 여백 줄)을 씁니다. pi 테마와 관계없이 같은 색으로 표시합니다.
   - `ctrl+shift+t`는 수정 키를 구분해 전달하는 터미널에서만 동작하므로 `alt+t`도 함께 등록합니다.
@@ -188,6 +196,7 @@ flowchart TB
   ```json
   {
     "graphics": {
+      "icon": "🎨",
       "preset": "mix",
       "names": ["그래픽", "그래픽 팀", "디자인"],
       "description": "UI 시안·이미지·시각 검토"

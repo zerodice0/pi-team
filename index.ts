@@ -10,6 +10,7 @@ import { board, status, widget } from './board.ts';
 import { closeTeam, findSummary, parseStart, report, roleList, splitGoal } from './lifecycle.ts';
 import { registerMailbox, send, sendParams } from './mailbox.ts';
 import { teamPanel } from './panel.ts';
+import { herdrStatus } from './herdr-status.ts';
 import { participant, type ParticipantRuntime } from './participant.ts';
 import { childEntry, generateAgents, imageDisabled, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
 import { errorCode, getTeam, git, isLive, members, teamDir, teams, text, writeJson, type FleetEntry, type Team } from './registry.ts';
@@ -72,7 +73,7 @@ function registerMainLoader(pi: ExtensionAPI, refresh: () => void, targets: Team
     async execute() {
       if (!installed) {
         pi.registerTool({ name: 'team_start', label: 'Start team', description: 'Create a new Pi team from a preset or alias and give the user its interactive lead. Only when explicitly requested.',
-          parameters: Type.Object({ preset: Type.String(), name: Type.Optional(Type.String()), base: Type.Optional(Type.String()), fromDirty: Type.Optional(Type.Boolean()), goal: Type.String() }),
+          parameters: Type.Object({ preset: Type.String(), name: Type.Optional(Type.String()), base: Type.Optional(Type.String()), fromDirty: Type.Optional(Type.Boolean()), goal: Type.String(), icon: Type.Optional(Type.String({ description: 'One emoji that identifies the team, if the user asked for one.' })) }),
           async execute(_id, p, _signal, _update, ctx) { const result = startNamed(ctx.cwd, targets, p); refresh(); return text(result); } });
         pi.registerTool({ name: 'team_status', label: 'Team status', description: 'Read active team registry or the selected team summary.', parameters: Type.Object({ team: Type.Optional(Type.String()) }),
           async execute(_id, p) { return text(JSON.stringify(teamStatus(p.team))); } });
@@ -182,6 +183,7 @@ export default async function piTeam(pi: ExtensionAPI) {
     registerModels(pi, presets, lead.routed);
     registerMailbox(pi, lead.owner, lead.update);
     snapshots(pi, team);
+    herdrStatus(pi, team);
     guardDelegation(pi, team, presets, registerRoleAgents(pi, team, presets));
     if (orchestrator.tools || orchestrator.readOnly) pi.on('session_start', () => {
       const allowed = orchestrator.tools && new Set([...orchestrator.tools, 'subagents_enable', 'subagent', 'team_peers', 'team_send', 'team_inbox', 'team_wait', 'team_report']);

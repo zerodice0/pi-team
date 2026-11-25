@@ -3,9 +3,9 @@ import { matchesKey, truncateToWidth } from '@earendil-works/pi-tui';
 import { join } from 'node:path';
 import { send, type Address } from './mailbox.ts';
 import { findSummary, threads } from './lifecycle.ts';
-import { getLead, leadState, ledger, members, readJson, teamDir, teams, type LedgerEntry, type Participant, type Snapshot, type Team } from './registry.ts';
+import { getLead, leadState, ledger, members, readJson, teamDir, teamIcon, teams, type LedgerEntry, type Participant, type Snapshot, type Team } from './registry.ts';
 
-export const teamLabel = (t: Team) => t.alias ? `${t.id}(${t.aliasLabel ?? t.alias})` : t.id;
+export const teamLabel = (t: Team) => `${teamIcon(t)} ${t.alias ? `${t.id}(${t.aliasLabel ?? t.alias})` : t.id}`;
 
 export function status(t: Team) {
   const lead = getLead(t.id);
@@ -33,7 +33,7 @@ function rowText(p: Participant, events: LedgerEntry[], team: string, state: str
   const key = `${p.key}@${team}`;
   const s = events.filter(e => e.event === 'sent' && e.from === key).length;
   const r = events.filter(e => e.event === 'delivered' && e.to === key).length;
-  return `${p.role} | ${p.key} | ${p.fallback ? '⇢ ' : ''}${p.model ?? 'pending'} | ${state} | ${p.tool ?? '—'}${p.path ? ` ${p.path}` : ''} | S${s}/R${r} | ${p.tokens} tokens`;
+  return `${p.role} | ${p.key} | ${p.model ?? 'pending'}${p.fallback ? ' (fallback)' : ''} | ${state} | ${p.tool ?? '—'}${p.path ? ` ${p.path}` : ''} | S${s}/R${r} | ${p.tokens} tokens`;
 }
 const views = ['Teams', 'Team', 'Messages', 'Summary'] as const;
 function clean(s: string) { return s.replace(/[\x00-\x1f\x7f-\x9f]/g, ' '); }
@@ -65,11 +65,12 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
         if (!d) lines = ['No teams. Use /team start to create one.'];
         else if (view === 0) lines = data.flatMap(({ team: t, state, rows, sent, diff }, i) => [
           `${selected === i ? '▶' : ' '} ${teamLabel(t)} | ${t.preset} | ${state} | ${rows.length} members | ${sent.length} messages | ${diff}`,
-          `  Goal ${t.goal}`,
+          `  ${t.description ? `About ${t.description} · ` : ''}Goal ${t.goal}`,
           `  Repo ${t.repo} · ${t.workspace ?? 'external'}`,
           `  Worktree ${t.worktree} · ${t.branch}`]);
         else if (view === 1) lines = [
           `${d.team.id} · ${d.team.worktree} · ${d.state}`,
+          ...(d.team.description ? [`About ${d.team.description}`] : []),
           `Goal ${d.team.goal}`,
           'Role | member key | actual model | state | current tool/path | sent/received | tokens',
           ...(d.lead ? [rowText(d.lead, d.events, d.team.id, d.state)] : ['Lead has not registered.']),
@@ -77,7 +78,7 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
           ...d.pending.map(p => `${p.role} | ${p.key} | ${p.model ?? 'pending'} | starting | — | S0/R0 | ${p.tokens?.total ?? 0} tokens`),
           '', 'Recent messages (max 5)',
           ...d.sent.slice(-5).map(e => `${e.from} → ${e.to}: ${e.subject ?? e.body}`)];
-        else if (view === 2) lines = threads(d.events).flatMap(group => group.map(({ message: e, state }, i) => `${i ? '  ↳' : '•'} ${e.from} → ${e.to} [${state}] ${e.subject ? `${e.subject}: ` : ''}${e.body}`));
+        else if (view === 2) lines = threads(d.events).flatMap(group => group.map(({ message: e, state }, i) => `${i ? '   ›' : '•'} ${e.from} → ${e.to} [${state}] ${e.subject ? `${e.subject}: ` : ''}${e.body}`));
         else lines = (findSummary(d.team.id) ?? 'No summary yet.').split('\n');
         if (!lines.length) lines = ['No messages.'];
         const begin = Math.min(view === 0 ? Math.max(0, (selected - Math.max(1, Math.floor(max / TEAM_LINES)) + 1) * TEAM_LINES) : offset, Math.max(0, lines.length - max));
