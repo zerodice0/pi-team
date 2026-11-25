@@ -157,7 +157,8 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
   const savedY = saved ? saved.v === 2 ? saved.offsetY : saved.offsetY + DEFAULT_Y : DEFAULT_Y;
   const options: OverlayOptions = {
     anchor: 'top-right', width: WIDTH, margin: { top: MARGIN, right: RIGHT }, nonCapturing: true,
-    offsetX: saved?.offsetX ?? 0, offsetY: savedY,
+    // Saved values may come from v1, which allowed offsets that pi-tui then clamped away.
+    offsetX: Math.min(0, saved?.offsetX ?? 0), offsetY: Math.max(0, savedY),
     visible: (w, h) => w >= WIDTH + 40 && h >= MARGIN + FRAME + MIN_BODY + RESERVE + 4,
   };
   const maxY = (rows: number) => Math.max(0, rows - RESERVE - FRAME - MIN_BODY - MARGIN);
