@@ -1,8 +1,8 @@
 import { realpathSync, renameSync, rmSync } from 'node:fs';
 import { dirname, basename, isAbsolute, join, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { generateAgents, readPresets } from './presets.ts';
-import { appendLedger, diffStat, exec, exists, getLead, getTeam, git, isLive, ledger, locked, log, members, mkdir, readText, root, teamDir, writeAtomic, writeJson, type Team, type LedgerEntry } from './registry.ts';
+import { generateAgents, imageDisabled, readPresets, type Presets } from './presets.ts';
+import { appendLedger, diffStat, exec, exists, getLead, getTeam, git, isLive, ledger, locked, log, members, mkdir, readText, root, teamDir, teams, writeAtomic, writeJson, type Team, type LedgerEntry } from './registry.ts';
 
 export interface Start { preset: string; name?: string; base?: string; fromDirty?: boolean; goal: string }
 interface HerdrCreated { workspace: { workspace_id: string }; root_pane: { pane_id: string }; worktree: { path: string } }
@@ -15,6 +15,38 @@ function herdr<T>(cwd: string, ...args: string[]): T {
   return data.result;
 }
 const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
+// Spell out the member agents: without the list, leads guess names such as pi-team.<preset>-member.
+export function roleList(presets: Presets, preset: string) {
+  return Object.entries(presets[preset]).filter(([role]) => role !== 'orchestrator' && !(role === 'image' && imageDisabled()))
+    .map(([role, item]) => `pi-team.${preset}-${role}${[item.readOnly && 'read-only', item.max && `up to ${item.max} at once`].filter(Boolean).map(s => ` (${s})`).join('')}`);
+}
+
+// `herdr worktree create` opens a primary workspace for the repository when none exists.
+// Record it as pi-team's so close can remove it once no team or worktree needs it.
+interface HerdrWorkspace { workspace_id: string; pane_count: number; tab_count: number; worktree?: { repo_key: string; is_linked_worktree: boolean } }
+const repoKey = (repo: string) => realpathSync(git(repo, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+function repoWorkspaces(repo: string, key: string) {
+  const { workspaces } = herdr<{ workspaces: HerdrWorkspace[] }>(repo, 'workspace', 'list');
+  return workspaces.filter(w => {
+    if (!w.worktree) return false;
+    try { return realpathSync(w.worktree.repo_key) === key; } catch { return false; }
+  });
+}
+function closeHostWorkspace(team: Team) {
+  const id = team.hostWorkspace;
+  if (!id || teams().some(t => t.hostWorkspace === id)) return '';
+  const group = repoWorkspaces(team.repo, repoKey(team.repo));
+  const host = group.find(w => w.workspace_id === id);
+  if (!host) return '';
+  const keep = (why: string) => ` Kept Herdr workspace ${id} (${why}).`;
+  if (group.some(w => w.worktree?.is_linked_worktree)) return keep('other worktrees are open');
+  if (host.tab_count !== 1 || host.pane_count !== 1) return keep('it has more tabs or panes');
+  const { panes } = herdr<{ panes: { pane_id: string }[] }>(team.repo, 'pane', 'list', '--workspace', id);
+  const { process_info: info } = herdr<{ process_info: { shell_pid?: number; foreground_process_group_id?: number } }>(team.repo, 'pane', 'process-info', '--pane', panes[0].pane_id);
+  if (!info.shell_pid || info.foreground_process_group_id !== info.shell_pid) return keep('its shell is running a command');
+  herdr(team.repo, 'workspace', 'close', id);
+  return ` Closed Herdr workspace ${id}.`;
+}
 export function start(cwd: string, p: Start, alias?: { key: string; names: string[] }) {
   if (!p.goal.trim() || p.goal.includes('\0')) throw new Error('A goal is required.');
   const repo = realpathSync(git(cwd, ['rev-parse', '--show-toplevel']));
@@ -55,8 +87,15 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
       alias: alias?.key, aliasLabel: alias?.names[0] };
     mkdir(dirname(worktree));
     if (process.env.HERDR_PANE_ID) {
+      const key = repoKey(repo);
+      const primaries = () => repoWorkspaces(repo, key).filter(w => !w.worktree?.is_linked_worktree).map(w => w.workspace_id);
+      const before = new Set(primaries());
       const response = herdr<HerdrCreated>(repo, 'worktree', 'create', '--cwd', repo, '--branch', branch, '--base', baseCommit, '--path', worktree, '--label', `pi-team ${id}`, '--no-focus');
       team.worktree = response.worktree.path; team.workspace = response.workspace.workspace_id; team.pane = response.root_pane.pane_id;
+      try {
+        const after = primaries();
+        team.hostWorkspace = after.find(w => !before.has(w)) ?? teams().find(t => t.hostWorkspace && after.includes(t.hostWorkspace))?.hostWorkspace;
+      } catch { /* cleanup bookkeeping only */ }
     } else {
       git(repo, ['worktree', 'add', '-b', branch, worktree, baseCommit]);
     }
@@ -77,7 +116,7 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
     const promptPath = join(dir, 'lead-prompt.md');
     writeAtomic(promptPath, [
       `You lead pi-team ${id} in ${team.worktree}. Talk directly to the user.`,
-      `Delegate with the subagent tool only to pi-team.${p.preset}-<role> agents. Never pass model, cwd, worktree, an external runner, or a script workflow. Use async children when members must exchange mail.`,
+      `Delegate with the subagent tool only to these member agents, using the exact names: ${roleList(captured, p.preset).join(', ')}. Never pass model, cwd, worktree, an external runner, or a script workflow. Use async children when members must exchange mail.`,
       'If a member fails with a recorded fallback and sideEffects=false, run that role again so routing skips the cooled model. If sideEffects=true, do not rerun it; report the failure and side effects to the user.',
       'Use team_peers to inspect members and team_send to collaborate. Use team_report to finalize the team summary. Do not merge or remove the worktree without the user.',
       captured[p.preset].orchestrator.prompt ?? '',
@@ -137,12 +176,17 @@ export function closeTeam(id: string, confirmLead: boolean, confirmUnmerged: boo
         if (source && source !== id && getTeam(source)) log(source, e);
       }
     });
+    let host = '';
+    if (team.workspace) {
+      try { host = closeHostWorkspace(team); }
+      catch (e) { host = ` Could not check Herdr workspace ${team.hostWorkspace}: ${String(e)}`; }
+    }
     if (merged) {
       // Use Git's own ancestry guard as well; keeping a branch is preferable to forcing deletion.
       try { git(team.repo, ['branch', '-d', team.branch]); }
-      catch (e) { return `Closed ${id}; archive: ${archive}. Branch kept: ${String(e)}`; }
+      catch (e) { return `Closed ${id}; archive: ${archive}. Branch kept: ${String(e)}${host}`; }
     }
-    return `Closed ${id}; archive: ${archive}.${merged ? '' : ` Unmerged branch retained: ${team.branch}.`}`;
+    return `Closed ${id}; archive: ${archive}.${merged ? '' : ` Unmerged branch retained: ${team.branch}.`}${host}`;
   });
 }
 export function findSummary(id: string) {

@@ -14,6 +14,8 @@ export function teamDir(team: string) {
 export interface Team {
   id: string; preset: string; repo: string; worktree: string; branch: string; base: string; baseCommit: string;
   baseBranch?: string; goal: string; createdAt: number; workspace?: string; pane?: string;
+  /** Primary Herdr workspace that `herdr worktree create` opened for this repository on pi-team's behalf. */
+  hostWorkspace?: string;
   alias?: string; aliasLabel?: string;
 }
 export interface Participant {

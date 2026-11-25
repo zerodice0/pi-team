@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { realpathSync } from 'node:fs';
 import { aliasHints, delegate, readTargets, showAliases, startNamed, type TeamTargets } from './aliases.ts';
 import { board, status, widget } from './board.ts';
-import { closeTeam, findSummary, parseStart, report, splitGoal } from './lifecycle.ts';
+import { closeTeam, findSummary, parseStart, report, roleList, splitGoal } from './lifecycle.ts';
 import { registerMailbox, send, sendParams } from './mailbox.ts';
 import { teamPanel } from './panel.ts';
 import { participant, type ParticipantRuntime } from './participant.ts';
@@ -135,7 +135,7 @@ function guardDelegation(pi: ExtensionAPI, team: Team, presets: Presets, active:
     let role = typeof agent === 'string' && agent.startsWith(prefix) ? agent.slice(prefix.length) : '';
     const suffix = `.team-${team.id}`;
     if (role.endsWith(suffix)) role = role.slice(0, -suffix.length);
-    if (!role || role === 'orchestrator' || !Object.hasOwn(presets[team.preset], role)) return block(`Only ${prefix}<role> agents are permitted.`);
+    if (!role || role === 'orchestrator' || !Object.hasOwn(presets[team.preset], role)) return block(`Unknown team agent ${String(agent)}. Use one of: ${roleList(presets, team.preset).join(', ')}.`);
     if (role === 'image' && imageDisabled()) return block(`Image role disabled: ${imageDisabled()}`);
     if (input.action || ['workflow', 'args', 'cwd', 'worktree', 'runner', 'profile', 'machine', 'gate', 'tasks', 'chain', 'script', 'isolation', 'agentScope', 'extensions', 'subagentOnlyExtensions'].some(k => Object.hasOwn(input, k) || Object.hasOwn(options, k))) {
       return block('Run a direct team role in this worktree without alternate launch options.');
