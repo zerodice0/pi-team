@@ -55,7 +55,7 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 |---|---|
 | `description` | 한 줄 설명. 팀장이 역할을 고를 때 보는 목록과 agent 설명에 들어갑니다. |
 | `skills` | 팀원에게 줄 스킬 이름 목록. pi가 찾는 위치(`~/.agents/skills` 등)에 설치되어 있어야 합니다. |
-| `mcp` | 팀원 전용 MCP 서버 이름 목록. 지금은 `blender`만 있습니다. |
+| `mcp` | 팀원 전용 MCP 서버 이름 목록. `blender`와 `rea`가 있습니다. |
 | `tools`, `extensions`, `readOnly`, `max`, `prompt` | 도구 목록, 팀원 전용 확장, 읽기 전용 여부, 동시 실행 상한, 추가 프롬프트 |
 
 ```json
@@ -67,7 +67,11 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 }
 ```
 
-`mcp: ["blender"]`인 팀원은 시작할 때 자기 전용 헤드리스 Blender와 [mcp-for-blender](https://github.com/ahujasid/mcp-for-blender) 서버를 빈 포트로 띄우고, 끝날 때 함께 종료합니다. 메인 세션과 팀장은 Blender를 띄우지 않으며, 여러 팀원이 동시에 각자의 Blender를 쓸 수 있습니다. 서버 도구는 `mcp__blender__execute_blender_code`, `get_scene_info`, `look`, `search_assets`, `import_asset`, `get_addon_status` 이름으로 등록됩니다. 필요한 것은 PATH의 `blender`(macOS는 `/Applications/Blender.app`도 찾음), `uv`(`uvx`), `python3`입니다. mcp-for-blender는 시작할 때마다 최신판을 받고, 서버와 Blender 애드온은 같은 판을 씁니다. Blender 출력은 `~/.cache/pi-team/blender-mcp/`에 남습니다.
+팀원 전용 MCP 서버는 팀원이 처음 도구를 호출할 때 시작하고, 팀원 세션이 끝날 때 프로세스 그룹째 종료합니다(SIGTERM, 5초 뒤 SIGKILL). 도구를 쓰지 않는 팀원은 서버를 띄우지 않으며, 도구 정의는 `~/.cache/pi-team/mcp/<이름>-tools.json`에 캐시합니다.
+
+`mcp: ["blender"]`인 팀원은 첫 Blender 호출 때 자기 전용 헤드리스 Blender와 [mcp-for-blender](https://github.com/ahujasid/mcp-for-blender) 서버를 빈 포트로 띄우고, 끝날 때 함께 종료합니다. 저장하지 않은 장면을 잃지 않도록 유휴 종료는 하지 않습니다. 메인 세션과 팀장은 Blender를 띄우지 않으며, 여러 팀원이 동시에 각자의 Blender를 쓸 수 있습니다. 서버 도구는 `mcp__blender__execute_blender_code`, `get_scene_info`, `look`, `search_assets`, `import_asset`, `get_addon_status` 이름으로 등록됩니다. 필요한 것은 PATH의 `blender`(macOS는 `/Applications/Blender.app`도 찾음), `uv`(`uvx`), `python3`입니다. mcp-for-blender는 시작할 때마다 최신판을 받고, 서버와 Blender 애드온은 같은 판을 씁니다. Blender 출력은 `~/.cache/pi-team/blender-mcp/`에 남습니다.
+
+`mcp: ["rea"]`인 팀원은 [REA](https://github.com/morluto/rea)(`rea mcp`)를 씁니다. REA 도구는 260개가 넘고 정의가 수 MB이므로, 팀원에게는 중계 도구 세 개만 등록합니다. `rea_tools`는 이름과 설명으로 도구를 검색하고, `rea_tool_schema`는 한 도구의 입력 스키마를 보여 주며, `rea_call`은 도구 하나를 실행합니다. REA는 첫 호출 때 시작하고, 10분 동안 호출이 없으면 종료한 뒤 다음 호출 때 다시 시작합니다(열었던 대상은 닫히며, 결과에 재시작 안내가 붙습니다). 유휴 시간은 `PI_TEAM_REA_IDLE_MINUTES`로 바꾸고, `0`이면 유휴 종료를 끕니다. 호출 하나의 제한 시간은 1시간입니다. 필요한 것은 `rea`(`brew install rea`)이고, 네이티브 디컴파일에는 Ghidra와 JDK 25 이상이 필요합니다. 확장은 `GHIDRA_INSTALL_DIR`가 없으면 Homebrew(`opt/ghidra/libexec`)와 `/opt/ghidra`, `/usr/share/ghidra`에서 Ghidra를 찾고, `JAVA_HOME`이 25 미만이면 Homebrew `openjdk*`, `/Library/Java/JavaVirtualMachines`, `/usr/lib/jvm`에서 가장 새 JDK 25 이상을 골라 넘깁니다. Ghidra JVM은 REA가 종료할 때 함께 정리됩니다.
 
 Herdr 사이드바에 팀 정보를 보이려면 `~/.config/herdr/config.toml`에 토큰 줄을 추가하고 `herdr server reload-config`를 실행합니다.
 

@@ -77,7 +77,10 @@ flowchart TB
 - **역할 추가:** 사용자가 역할을 자유롭게 추가할 수 있습니다. 역할 속성은 `models`, `description`, `skills`, `mcp`, `tools`, `extensions`, `readOnly`, `max`, `prompt`입니다.
   - `description`은 agent의 description과 팀장 프롬프트의 역할 목록에 들어갑니다. 팀장은 이 설명을 보고 팀원을 고릅니다.
   - `skills`는 agent frontmatter `skills:`로 들어가 그 팀원에게만 해당 스킬을 줍니다.
-  - `mcp`는 팀원 전용 MCP 서버입니다(현재 `blender`). pi-subagents는 `mcp:` 선택을 부모 세션이 이미 연결한 서버에서만 찾으므로, pi 내장 MCP 대신 팀원 전용 확장(`blender-mcp/extension.ts`, `subagentOnlyExtensions`)이 MCP 클라이언트가 되어 서버 도구를 일반 도구(`mcp__blender__<tool>`)로 등록합니다. 확장은 `blender-mcp/launch.py`를 실행하고, 런처는 빈 포트에 헤드리스 Blender(`harness.py`)와 같은 판의 mcp-for-blender 서버를 띄웁니다. 포그라운드와 백그라운드 팀원 모두에서 동작합니다.
+  - `mcp`는 팀원 전용 MCP 서버입니다(`blender`, `rea`). pi-subagents는 `mcp:` 선택을 부모 세션이 이미 연결한 서버에서만 찾으므로, pi 내장 MCP 대신 팀원 전용 확장(`blender-mcp/extension.ts`, `subagentOnlyExtensions`)이 MCP 클라이언트가 되어 서버 도구를 일반 도구(`mcp__blender__<tool>`)로 등록합니다. 확장은 `blender-mcp/launch.py`를 실행하고, 런처는 빈 포트에 헤드리스 Blender(`harness.py`)와 같은 판의 mcp-for-blender 서버를 띄웁니다. 포그라운드와 백그라운드 팀원 모두에서 동작합니다.
+  - 서버는 공용 클라이언트 `mcp/client.ts`(`LazyMcp`)가 관리합니다. 첫 도구 호출 때 서버를 별도 프로세스 그룹(`detached`)으로 시작하고, 팀원 세션이 끝나면 그룹 전체에 SIGTERM을 보내고 5초 뒤 SIGKILL을 보냅니다. `idleMs`를 주면 그 시간 동안 호출이 없을 때 서버를 끄고 다음 호출 때 다시 띄우며, 재시작 사실을 도구 결과에 알립니다. 도구 정의는 `~/.cache/pi-team/mcp/<이름>-tools.json`에 캐시해, 서버를 띄우기 전에도 도구를 등록합니다.
+  - Blender는 지연 시작만 하고 유휴 종료는 하지 않습니다. 저장하지 않은 장면이 사라지기 때문입니다.
+  - `rea`(`rea-mcp/extension.ts`)는 REA 도구 260여 개를 하나씩 등록하지 않고 중계 도구 `rea_tools`(검색), `rea_tool_schema`, `rea_call`만 등록합니다. 10분(`PI_TEAM_REA_IDLE_MINUTES`) 동안 호출이 없으면 종료하고, 호출 제한 시간은 1시간입니다. Ghidra 경로(`GHIDRA_INSTALL_DIR`)와 JDK 25 이상(`JAVA_HOME`)을 자동으로 찾아 넘깁니다. Ghidra JVM은 별도 프로세스 그룹이지만, REA가 SIGTERM을 받거나 stdin이 닫히면 함께 종료합니다.
 - **역할 agent 생성:** 확장이 `~/.pi/agent/agents/pi-team/<preset>/<role>.md`를 생성합니다. frontmatter는 `package: pi-team`, `name: <preset>-<role>`, `model: team/<preset>.<role>`이고, readOnly 역할은 `excludeTools: write, edit`로 둡니다. orchestrator는 agent 파일을 만들지 않습니다.
 - **virtual model 라우팅:**
   - `reason` 값이 `user` 또는 `continuation`이면, 인증이 있고 cooldown 중이 아닌 첫 후보를 고릅니다.

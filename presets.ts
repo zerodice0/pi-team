@@ -4,6 +4,7 @@ import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { blenderTools, toolName } from './blender-mcp/extension.ts';
+import { reaTools } from './rea-mcp/extension.ts';
 import { exists, locked, log, mkdir, namePattern, names, readJson, readText, remove, root, teamDir, writeAtomic, writeJson } from './registry.ts';
 
 interface Role { models: string[]; description?: string; skills?: string[]; mcp?: string[]; tools?: string[]; extensions?: string[]; readOnly?: boolean; max?: number; prompt?: string }
@@ -13,7 +14,12 @@ const mcpServers: Record<string, { extension: string; tools: string[]; prompt: s
   blender: {
     extension: join(dirname(fileURLToPath(import.meta.url)), 'blender-mcp', 'extension.ts'),
     tools: blenderTools.map(toolName),
-    prompt: 'You have your own headless Blender (mcp-for-blender): run bpy code with mcp__blender__execute_blender_code, inspect with mcp__blender__get_scene_info and look at the result with mcp__blender__look. Save .blend files, renders and exports inside the team worktree; the scene is lost when you finish.',
+    prompt: 'You have your own headless Blender (mcp-for-blender), started on your first Blender call: run bpy code with mcp__blender__execute_blender_code, inspect with mcp__blender__get_scene_info and look at the result with mcp__blender__look. Save .blend files, renders and exports inside the team worktree; the scene is lost when you finish.',
+  },
+  rea: {
+    extension: join(dirname(fileURLToPath(import.meta.url)), 'rea-mcp', 'extension.ts'),
+    tools: reaTools,
+    prompt: `REA reverse-engineering tools are reached through rea_tools (search by words), rea_tool_schema (exact input schema) and rea_call (run one tool). REA starts on the first of these calls and stops after ${Number(process.env.PI_TEAM_REA_IDLE_MINUTES ?? 10)} idle minutes, which closes open targets. Native decompilation uses Ghidra, whose first analysis of a target can take minutes. Keep evidence and reports inside the team worktree.`,
   },
 };
 export type Presets = Record<string, Record<string, Role>>;
