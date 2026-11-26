@@ -7,6 +7,7 @@ import { imageDisabled, readPresets, registerModels } from './presets.ts';
 import { getTeam, root, writeJson } from './registry.ts';
 import { board, widget } from './board.ts';
 import { trackRun } from './stats.ts';
+import { memberCompaction } from './compact.ts';
 
 export default function child(pi: ExtensionAPI) {
   const id = process.env.PI_TEAM_ID;
@@ -26,6 +27,7 @@ export default function child(pi: ExtensionAPI) {
   trackRun(pi, team, state.row);
   registerModels(pi, presets, state.routed);
   registerMailbox(pi, state.owner, state.update);
+  memberCompaction(pi);
   widget(pi);
   pi.registerCommand('team', { description: 'Open the team board', async handler(args, ctx) {
     if (args.trim() === 'board') await board(ctx, team.id, state.owner());
