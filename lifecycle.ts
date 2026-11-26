@@ -83,6 +83,28 @@ const leanLead = [
   '- When a task needs knowledge a role does not carry, search installed skills with team_skills and give that one member the extra skills through the subagent skill option. New skills are not installed during a team run; mention the gap in your report instead.',
 ].join('\n');
 
+// Members start fresh and cannot ask the user; what the lead leaves out of a brief, they guess.
+// craft-light showed both sides: well-structured briefs worked, and a brief without a time box or
+// report form ended in a member that timed out silently.
+export const intake = [
+  'Before the first delegation, check the goal:',
+  '- Write a short working brief for yourself: outcome, in scope and out of scope, done criteria, constraints, unknowns. Skip this when the goal already states them.',
+  '- Split the unknowns. If an answer would change what gets built or risks rework, ask the user before delegating: at most 3 questions, each with lettered options and your recommended default. Otherwise assume the default, state the assumption to the user, and proceed.',
+  '- When facts in the repository would settle a question, have a scout find them instead of asking the user or reading files yourself.',
+].join('\n');
+export const briefForm = [
+  'Every member task uses these headings, in this order, kept short and concrete:',
+  '## Goal - one sentence.',
+  '## Background - why, plus the user\'s words quoted verbatim when they matter; a fresh member cannot see this conversation.',
+  '## Read first - exact paths, earlier notes and reports to continue from.',
+  '## Do - numbered, highest priority first.',
+  '## Do not - write scope (which files or folders it may change), files to leave alone, invariants. Read-only roles: say so.',
+  '## Done when - acceptance criteria and how to check them (commands, captures, numbers).',
+  '## Limits - a time box (default 30 minutes), a notes file to append after each step, and when to stop and report. Keep notes, captures and other artifacts under artifacts/ in the team worktree (never /tmp) unless the user named another place.',
+  '## Report - what to return: the result, checks run and checks not run, open issues, changed files, artifact paths.',
+  'Add what the role needs: questions and evidence as path:line for investigation; findings P0-P2 with proof and a verdict for review; output paths for artifacts and captures.',
+].join('\n');
+
 export function start(cwd: string, p: Start, alias?: { key: string; names: string[]; description?: string; icon?: string }) {
   if (!p.goal.trim() || p.goal.includes('\0')) throw new Error('A goal is required.');
   if (p.icon !== undefined) checkIcon(p.icon, 'Team start');
@@ -158,6 +180,8 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
       `Delegate with the subagent tool only to these member agents, using the exact names. Pick the member whose description fits the work:\n${roleList(captured, p.preset).map(r => `- ${r}`).join('\n')}\nNever pass model, cwd, worktree, an external runner, or a script workflow. Use async children when members must exchange mail.`,
       'If a member fails with a recorded fallback and sideEffects=false, run that role again so routing skips the cooled model. If sideEffects=true, do not rerun it; report the failure and side effects to the user.',
       'Use team_peers to inspect members and team_send to collaborate. Use team_report to finalize the team summary. Do not merge or remove the worktree without the user.',
+      intake,
+      briefForm,
       leanLead,
       captured[p.preset].orchestrator.prompt ?? '',
     ].join('\n\n'));

@@ -90,6 +90,8 @@ export function roleAgent(preset: string, role: string, item: Role) {
   const subagentOnlyExtensions = [...new Set([...(item.extensions ?? []), ...mcp.map(name => mcpServers[name].extension), ...(role === 'image' ? [imageEntry] : [])])];
   const systemPrompt = [
     `You are the ${role} member. Stay inside the team worktree; use team_peers, team_send, team_inbox and team_wait to coordinate. Give the lead a concise final result.`,
+    'Follow the brief\'s Limits: append to the notes file after each step and stop to report before the time box ends, even if unfinished. If the brief leaves a choice open, take the safer option and state it; ask the lead with team_send only when a wrong guess would waste the work.',
+    'End with a short report under these headings: Result; Checks (run, with outcome, and not run); Open issues; Changed files (or none); Artifacts (paths). Never report an unrun check as passed.',
     'Keep your context small; it is re-read on every turn. Read large files with line ranges or rg instead of printing whole files, and do not reread a file or image you already have unless it changed. When you are resumed for a follow-up, build on what you already read.',
     role === 'vision' ? 'Use `read` on the supplied image path and describe the actual visual content.' : '',
     role === 'image' ? 'Use codex_generate_image with save="custom", saveDir="artifacts", outputFormat="png". Report the saved PNG path or the exact tool error; do not substitute another image generator.' : '',
