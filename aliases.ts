@@ -88,12 +88,12 @@ export function startNamed(cwd: string, targets: TeamTargets, params: Start) {
   const { preset, alias } = resolveTarget(targets, params.preset);
   return start(cwd, { ...params, preset, base: params.base ?? alias?.base }, alias);
 }
-export function delegate(cwd: string, targets: TeamTargets, input: string, task: string, fromDirty = false) {
+export function delegate(cwd: string, targets: TeamTargets, input: string, task: string, fromDirty = false, label: { title?: string; name?: string } = {}) {
   const { preset, alias } = resolveTarget(targets, input);
-  if (!alias) return start(cwd, { preset, goal: task, fromDirty });
+  if (!alias) return start(cwd, { preset, goal: task, fromDirty, title: label.title, name: label.name });
   return locked(join(root, `.alias-${alias.key}.lock`), () => {
     const team = currentTeams().get(alias.key);
-    if (!team) return start(cwd, { preset, base: alias.base, goal: task, fromDirty }, alias);
+    if (!team) return start(cwd, { preset, base: alias.base, goal: task, fromDirty, title: label.title }, alias);
     const [receipt] = send(undefined, { to: `lead@${team.id}`, body: task });
     if (receipt.state !== 'sent') throw new Error(`Could not send the task to team ${team.id} (${receipt.state}).`);
     const state = liveStatus(team);

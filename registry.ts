@@ -22,6 +22,58 @@ export interface Team {
   icon?: string;
   /** What the team is for, taken from its alias description. */
   description?: string;
+  /** Short human title shown instead of the ID; set at start or with /team title. */
+  title?: string;
+}
+// The ID names the branch, worktree and mail addresses, so it stays ASCII and fixed. People read the
+// title instead: the one given at start, else the first sentence of the goal, else the ID.
+export const TITLE_MAX = 48;
+const flat = (s: string) => s.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').replace(/\s+/g, ' ').trim();
+export function clipText(text: string, width: number) {
+  if (visibleWidth(text) <= width) return text;
+  let out = '';
+  let used = 0;
+  for (const ch of text) {
+    const w = visibleWidth(ch);
+    if (used + w > width - 1) break;
+    out += ch; used += w;
+  }
+  return `${out.trimEnd()}…`;
+}
+export function cleanTitle(title: unknown) {
+  if (title === undefined || title === null) return undefined;
+  if (typeof title !== 'string') throw new Error('A team title must be text.');
+  const text = flat(title);
+  return text ? clipText(text, 60) : undefined;
+}
+// Goals are often whole briefs: skip heading-only lines such as "## 목표", markdown markers and labels.
+const goalLabel = /^(?:목표|목적|작업|과제|요약|goal|objective|task|summary)(?:\s*[:：]\s*|\s+|$)/iu;
+export function goalParts(goal: string) {
+  const lines = goal.replace(/\r/g, '').split('\n')
+    .map(l => flat(l).replace(/^(?:#{1,6}|[-*+>]|\d+[.)])\s+/u, '').replace(/\*\*|__|`/g, '').replace(goalLabel, '').trim())
+    .filter(l => [...l].length >= 4);
+  if (!lines.length) return { first: '', sentence: '', rest: '' };
+  let line = lines[0];
+  let first = line;
+  const bracket = /^\[([^\]]{4,})\]\s*/u.exec(line);
+  if (bracket) { first = bracket[1]; line = line.slice(bracket[0].length); }
+  else {
+    const sentence = /^(.+?[.。!?])(?:\s|$)|^(.+?)\s[—–]\s/u.exec(line);
+    first = (sentence?.[1] ?? sentence?.[2] ?? line).trim();
+    line = line.slice(first.length).replace(/^\s*[—–]?\s*/u, '');
+  }
+  // first is the title candidate (no closing period); sentence keeps it for showing the goal itself.
+  return { first: first.replace(/[.。]$/u, ''), sentence: first, rest: [line, ...lines.slice(1)].filter(Boolean).join(' ') };
+}
+export const teamTitle = (t: Team) => t.title || clipText(goalParts(t.goal).first, TITLE_MAX) || t.id;
+// The goal text to show under the title, without repeating a title taken from it.
+export function goalDetail(t: Team) {
+  const { sentence, rest } = goalParts(t.goal);
+  return t.title ? [sentence, rest].filter(Boolean).join(' ') : rest || sentence;
+}
+// A team ID from a requested name: lowercase ASCII words joined by hyphens, at most 32 characters.
+export function teamName(name: string) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+/, '').slice(0, 32).replace(/-+$/, '') || undefined;
 }
 // Animals rather than coloured squares or circles, which HAM already uses for agent identity.
 const defaultIcons = ['🦊', '🐙', '🦉', '🐝', '🦀', '🐳', '🦄', '🐢', '🦜', '🐧', '🦋', '🐬', '🦔', '🐞', '🦁', '🐼'];

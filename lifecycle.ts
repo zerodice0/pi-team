@@ -4,10 +4,11 @@ import { randomBytes } from 'node:crypto';
 import { generateAgents, imageDisabled, readPresets, unknownPreset, type Presets } from './presets.ts';
 import { leadSkillArgs } from './skills.ts';
 import { retroReport, writeRetro } from './stats.ts';
-import { appendLedger, checkIcon, defaultIcon, diffStat, exec, exists, getLead, getTeam, git, isLive, ledger, locked, log, members, mkdir, readText, root, teamDir, teams, writeAtomic, writeJson, type Team, type LedgerEntry } from './registry.ts';
+import { appendLedger, checkIcon, cleanTitle, clipText, defaultIcon, diffStat, exec, exists, getLead, getTeam, git, isLive, ledger, locked, log, members, mkdir, readText, root, teamDir, teamName, teams, teamTitle, writeAtomic, writeJson, type Team, type LedgerEntry } from './registry.ts';
 
-export interface Start { preset: string; name?: string; base?: string; fromDirty?: boolean; goal: string; icon?: string }
+export interface Start { preset: string; name?: string; title?: string; base?: string; fromDirty?: boolean; goal: string; icon?: string }
 interface HerdrCreated { workspace: { workspace_id: string }; root_pane: { pane_id: string }; worktree: { path: string } }
+const herdrLabel = (team: Team) => `${team.icon} ${clipText(teamTitle(team), 40)}`;
 function herdr<T>(cwd: string, ...args: string[]): T {
   const output = exec('herdr', args, cwd);
   const start = output.indexOf('{');
@@ -110,6 +111,9 @@ export const briefForm = [
 export function start(cwd: string, p: Start, alias?: { key: string; names: string[]; description?: string; icon?: string }) {
   if (!p.goal.trim() || p.goal.includes('\0')) throw new Error('A goal is required.');
   if (p.icon !== undefined) checkIcon(p.icon, 'Team start');
+  const title = cleanTitle(p.title);
+  const requested = p.name === undefined ? undefined : teamName(p.name);
+  if (p.name !== undefined && !requested) throw new Error(`Invalid team name: ${p.name}. Use English words; they become lowercase-hyphenated.`);
   const repo = realpathSync(git(cwd, ['rev-parse', '--show-toplevel']));
   const presets = readPresets(repo);
   if (!Object.hasOwn(presets, p.preset)) throw unknownPreset(repo, p.preset);
@@ -122,15 +126,17 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
   // Allocate and reserve the ID together so concurrent starts cannot pick the same name.
   const archive = join(root, 'archive');
   const id = locked(join(root, '.teams.lock'), () => {
-    let name = p.name ?? alias?.key ?? `${p.preset.slice(0, 23)}-${randomBytes(4).toString('hex')}`;
+    const chosen = requested ?? alias?.key;
+    let name = chosen ?? `${p.preset.slice(0, 23)}-${randomBytes(4).toString('hex')}`;
     const reserved = (candidate: string) => candidate === 'archive' || candidate === 'vendor' || candidate === 'stats';
-    if (p.name === undefined && alias) {
+    // A chosen name that is taken gets -2, -3, ...; a random one is unique already.
+    if (chosen) {
       const prefix = 'refs/heads/pi-team/';
       const branches = new Set(git(repo, ['for-each-ref', '--format=%(refname)', prefix]).split('\n')
         .filter(ref => ref.startsWith(prefix)).map(ref => ref.slice(prefix.length)));
       for (let n = 2; reserved(name) || exists(teamDir(name)) || exists(join(archive, name)) || branches.has(name); n++) {
         const suffix = `-${n}`;
-        name = `${alias.key.slice(0, 32 - suffix.length)}${suffix}`;
+        name = `${chosen.slice(0, 32 - suffix.length).replace(/-+$/, '')}${suffix}`;
       }
     }
     const dir = teamDir(name);
@@ -147,13 +153,13 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
   try {
     const worktree = join(dirname(repo), 'worktrees', basename(repo), `team-${id}`);
     team = { id, preset: p.preset, repo, worktree, branch, base, baseCommit, baseBranch: symbolic, goal: p.goal, createdAt: Date.now(),
-      alias: alias?.key, aliasLabel: alias?.names[0], icon: p.icon ?? alias?.icon ?? defaultIcon(id), description: alias?.description };
+      alias: alias?.key, aliasLabel: alias?.names[0], icon: p.icon ?? alias?.icon ?? defaultIcon(id), description: alias?.description, title };
     mkdir(dirname(worktree));
     if (process.env.HERDR_PANE_ID) {
       const key = repoKey(repo);
       const primaries = () => repoWorkspaces(repo, key).filter(w => !w.worktree?.is_linked_worktree).map(w => w.workspace_id);
       const before = new Set(primaries());
-      const response = herdr<HerdrCreated>(repo, 'worktree', 'create', '--cwd', repo, '--branch', branch, '--base', baseCommit, '--path', worktree, '--label', `${team.icon} pi-team ${id}`, '--no-focus');
+      const response = herdr<HerdrCreated>(repo, 'worktree', 'create', '--cwd', repo, '--branch', branch, '--base', baseCommit, '--path', worktree, '--label', herdrLabel(team), '--no-focus');
       team.worktree = response.worktree.path; team.workspace = response.workspace.workspace_id; team.pane = response.root_pane.pane_id;
       try {
         const after = primaries();
@@ -178,7 +184,7 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
     mkdir(join(dir, 'members'));
     const promptPath = join(dir, 'lead-prompt.md');
     writeAtomic(promptPath, [
-      `You lead pi-team ${id} in ${team.worktree}. Talk directly to the user.`,
+      `You lead pi-team ${id} ("${teamTitle(team)}") in ${team.worktree}. Talk directly to the user. If the work changes course, the user can retitle the team with /team title.`,
       `Delegate with the subagent tool only to these member agents, using the exact names. Pick the member whose description fits the work:\n${roleList(captured, p.preset).map(r => `- ${r}`).join('\n')}\nNever pass model, cwd, worktree, an external runner, or a script workflow. Use async children when members must exchange mail.`,
       'If a member fails with a recorded fallback and sideEffects=false, run that role again so routing skips the cooled model. If sideEffects=true, do not rerun it; report the failure and side effects to the user.',
       'Use team_peers to inspect members and team_send to collaborate. Use team_report to finalize the team summary. Do not merge or remove the worktree without the user.',
@@ -200,6 +206,24 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
     else if (!getTeam(id) && team) writeJson(join(dir, 'team.json'), team);
     throw e;
   }
+}
+// Retitle a team. The ID, branch, worktree and addresses stay; panels, board and Herdr follow the title.
+export function retitle(id: string, title: string) {
+  const clean = cleanTitle(title);
+  if (!clean) throw new Error('Usage: /team title <team> <title>');
+  const team = locked(join(root, `.participants-${id}.lock`), () => {
+    const current = getTeam(id);
+    if (!current) throw new Error(`Unknown team: ${id}`);
+    const next = { ...current, title: clean };
+    writeJson(join(teamDir(id), 'team.json'), next);
+    return next;
+  });
+  let note = '';
+  if (team.workspace) {
+    try { herdr(team.repo, 'workspace', 'rename', team.workspace, herdrLabel(team)); }
+    catch (e) { note = ` (Herdr workspace label unchanged: ${e instanceof Error ? e.message : String(e)})`; }
+  }
+  return `Team ${id} is now titled "${clean}".${note}`;
 }
 export function closeTeam(id: string, confirmLead: boolean, confirmUnmerged: boolean) {
   teamDir(id);
@@ -291,7 +315,7 @@ export function report(team: Team, summary: string, status: string) {
   }
   const conflicts = [...paths].filter(([, owners]) => owners.size > 1).map(([path, owners]) => `- ${path}: ${[...owners].join(', ')}`);
   const lead = getLead(team.id);
-  const lines = [`# ${team.id}`, `Status: ${status}`, '', summary, '', '## Role results',
+  const lines = [`# ${teamTitle(team)} (${team.id})`, `Status: ${status}`, '', summary, '', '## Role results',
     ...(lead ? [`- lead (${lead.model ?? 'unknown'}): ${summary}`] : []),
     ...participants.map(p => `- ${p.key} (${p.model ?? 'unknown'}${p.fallback ? ', fallback' : ''}, ${p.state}): ${p.error ?? p.result ?? 'No final result.'}`),
     '', '## Message threads', ...(grouped.length ? grouped.map(group => {
@@ -312,7 +336,7 @@ export function splitGoal(args: string, usage: string) {
   return { target, goal };
 }
 export function parseStart(args: string): Start {
-  const { target, goal } = splitGoal(args, 'Usage: /team start <preset or alias> [--name N] [--base REF] [--icon EMOJI] [--from-dirty] -- <goal>');
+  const { target, goal } = splitGoal(args, 'Usage: /team start <preset or alias> [--title TEXT] [--name N] [--base REF] [--icon EMOJI] [--from-dirty] -- <goal>');
   const firstFlag = /(?:^|\s)--\S/u.exec(target);
   const preset = firstFlag ? target.slice(0, firstFlag.index).trim() : target;
   if (!preset) throw new Error('A preset or alias is required.');
@@ -324,6 +348,13 @@ export function parseStart(args: string): Start {
     if (seen.has(flag)) throw new Error(`Repeated start option: ${flag}`);
     seen.add(flag);
     if (flag === '--from-dirty') result.fromDirty = true;
+    else if (flag === '--title') {
+      // The title runs to the next option, so it can hold spaces without quotes.
+      const words: string[] = [];
+      while (tokens[i + 1] && !tokens[i + 1].startsWith('--')) words.push(tokens[++i]);
+      if (!words.length) throw new Error('--title needs text.');
+      result.title = words.join(' ');
+    }
     else if ((flag === '--name' || flag === '--base') && tokens[i + 1] && !tokens[i + 1].startsWith('--')) result[flag === '--name' ? 'name' : 'base'] = tokens[++i];
     else if (flag === '--icon' && tokens[i + 1] && !tokens[i + 1].startsWith('--')) result.icon = checkIcon(tokens[++i], 'Team start');
     else throw new Error(`Invalid start option: ${flag}`);

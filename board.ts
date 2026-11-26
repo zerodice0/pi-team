@@ -4,9 +4,11 @@ import { join } from 'node:path';
 import { send, type Address } from './mailbox.ts';
 import { findSummary, threads } from './lifecycle.ts';
 import { activity, diffShort, edge, fg, glyph, headline, modelName, oneLine, pad, row, short, wrap, type Info, type Line, type Segment, type Tone } from './frame.ts';
-import { getLead, leadState, ledger, members, readJson, teamDir, teamIcon, teams, type LedgerEntry, type Snapshot, type Team } from './registry.ts';
+import { clipText, getLead, goalDetail, leadState, ledger, members, readJson, teamDir, teamIcon, teams, teamTitle, type LedgerEntry, type Snapshot, type Team } from './registry.ts';
 
-export const teamLabel = (t: Team) => `${teamIcon(t)} ${t.alias ? `${t.id}(${t.aliasLabel ?? t.alias})` : t.id}`;
+// Surfaces show the title; the ID, preset and alias appear only where an address is needed (board).
+export const teamLabel = (t: Team) => `${teamIcon(t)} ${teamTitle(t)}`;
+export const teamIds = (t: Team) => [t.id, t.preset, t.alias && (t.aliasLabel ?? t.alias), t.description && oneLine(t.description)].filter(Boolean).join(' · ');
 
 export function status(t: Team) {
   const lead = getLead(t.id);
@@ -46,11 +48,12 @@ function card(d: Info, selected: boolean, inner: number): Line[] {
   const rail: Segment = selected ? ['▌ ', 'title'] : ['  '];
   const { mark, tone, summary, summaryTone } = headline(d);
   const t = d.team;
-  const goal = wrap(oneLine(t.goal), inner - 4, 2);
+  const goal = wrap(goalDetail(t), inner - 4, 2);
   const diff = diffShort(d.diff) || (d.diff === 'not yet recorded' ? '' : oneLine(d.diff));
   return [
-    { left: [rail, [mark, tone], [' '], [teamLabel(t), 'name', true], [`  ${t.description ? oneLine(t.description) : t.preset}`, 'label']], right: [[summary, summaryTone]] },
+    { left: [rail, [mark, tone], [' '], [teamLabel(t), 'name', true]], right: [[summary, summaryTone]] },
     ...goal.map(text => ({ left: [rail, ['  '], [text, selected ? 'name' : 'label']] as Segment[] })),
+    { left: [rail, ['  '], [teamIds(t), 'label']] },
     { left: [rail, ['  '], [[count(d.rows.length + d.pending.length, 'member'), count(d.sent.length, 'message'), diff].filter(Boolean).join(' · '), 'label']] },
     { left: [rail, ['  '], [`${tilde(t.worktree)} · ${t.branch}`, 'label']] },
   ];
@@ -148,8 +151,8 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
         const height = Math.max(12, Math.min(tui.terminal.rows - 2, 40));
         const header: Line[] = d && view ? (() => {
           const { mark, tone, summary: state, summaryTone } = headline(d);
-          return [{ left: [[mark, tone], [' '], [teamLabel(d.team), 'name', true], [`  ${d.team.description ? oneLine(d.team.description) : d.team.preset}`, 'label']], right: [[state, summaryTone]] },
-            ...(view === 1 ? wrap(oneLine(d.team.goal), inner - 2, 2).map(text => ({ left: [['  '], [text, 'label']] as Segment[] })) : []), blank];
+          return [{ left: [[mark, tone], [' '], [teamLabel(d.team), 'name', true], [`  ${teamIds(d.team)}`, 'label']], right: [[state, summaryTone]] },
+            ...(view === 1 ? wrap(goalDetail(d.team), inner - 2, 2).map(text => ({ left: [['  '], [text, 'label']] as Segment[] })) : []), blank];
         })() : [];
         room = Math.max(3, height - 4 - header.length - (refreshError ? 1 : 0));
         let body: Line[];
@@ -217,7 +220,7 @@ export function widget(pi: ExtensionAPI) {
     const next = active.map(t => {
       const d = status(t);
       const finished = d.rows.filter(p => ['done', 'failed', 'stopped'].includes(p.state)).length;
-      return `${teamLabel(t)} ${d.state === 'done' ? `✓ done (${d.diff})` : `${d.state === 'stale' ? '!' : '▶'} ${finished}/${d.rows.length} ✉${d.sent.length}`}`;
+      return `${teamIcon(t)} ${clipText(teamTitle(t), 24)} ${d.state === 'done' ? `✓ done (${d.diff})` : `${d.state === 'stale' ? '!' : '▶'} ${finished}/${d.rows.length} ✉${d.sent.length}`}`;
     }).join(' · ');
     if (next !== before) ctx.ui.setWidget('pi-team', next ? [`teams: ${next}`] : undefined);
     before = next;

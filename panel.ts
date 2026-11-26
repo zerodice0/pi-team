@@ -5,13 +5,13 @@ import { status, teamLabel } from './board.ts';
 import { activity, clip, divider, edge, fg, glyph, headline, live, modelName, oneLine, row, short, wrap, type Info, type Line, type Segment } from './frame.ts';
 
 export { activity, diffShort, live, oneLine } from './frame.ts';
-import { readJson, root, teams, writeJson, type Participant } from './registry.ts';
+import { goalDetail, readJson, root, teams, writeJson, type Participant } from './registry.ts';
 
 // A non-capturing side panel, so the user can keep typing while teams work.
 // By default it sits below quota-panel.ts (top-right, about ten rows) and shares that
 // panel's titanium palette and frame, so the two read as one stack. In fullscreen mode
 // the title row is a drag handle; the position is remembered in teams/panel.json.
-const WIDTH = 50;
+const WIDTH = 60;
 // pi-tui clamps an overlay to its margins after applying offsets, so a large top margin
 // would pin the panel below it. Keep the margin minimal and express the default position
 // (row 11, under quota-panel.ts) as an offset that dragging can change in both directions.
@@ -39,10 +39,10 @@ export function teamLines(d: Info, inner: number): Line[] {
   const rows = [...d.rows].sort((a, b) => Number(live.has(b.state)) - Number(live.has(a.state)) || (a.startedAt ?? 0) - (b.startedAt ?? 0));
   const { mark, tone, summary, summaryTone } = headline(d);
   const lines: Line[] = [{
-    left: [[mark, tone], [' '], [teamLabel(d.team), 'name', true], [`  ${d.team.description ? oneLine(d.team.description) : d.team.preset}`, 'label']],
+    left: [[mark, tone], [' '], [teamLabel(d.team), 'name', true]],
     right: [[summary, summaryTone]],
   }];
-  const goal = wrap(oneLine(d.team.goal), inner - 2, d.state === 'done' ? 1 : 2);
+  const goal = wrap(goalDetail(d.team), inner - 2, d.state === 'done' ? 1 : 2);
   lines.push(...goal.map(text => ({ left: [['  '], [text, 'name']] as Segment[] })));
   if (d.state === 'done') return lines;
   const followUp = d.sent.filter(e => e.from === 'main' && e.to === `lead@${d.team.id}`).at(-1);

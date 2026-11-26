@@ -129,13 +129,15 @@ flowchart TB
 
 ## 5. 팀 생성·worktree·정리
 
-1. `/team start <preset> [--name N] [--base REF] [--from-dirty] -- <목표>`, 또는 메인 모델의 `team_start`.
+1. `/team start <preset> [--title 제목] [--name N] [--base REF] [--from-dirty] -- <목표>`, 또는 메인 모델의 `team_start`(`title`, `name`).
+   - **팀 ID와 제목:** ID는 branch, worktree, 메일 주소에 쓰이므로 ASCII로 두고 바꾸지 않습니다. `name`은 소문자와 하이픈으로 정리해 ID로 쓰고(최대 32자), 이미 쓰인 ID면 `-2`, `-3`을 붙입니다. `name`이 없으면 별칭 키, 그것도 없으면 `<preset>-<8자리 hex>`입니다. 사람이 읽는 제목은 `title`(60자까지, 어떤 언어든 가능)이며, 없으면 목표의 첫 문장(`## 목표` 같은 제목 줄과 「목표:」 머리말은 건너뜀)을 48칸으로 자른 값, 그것도 없으면 ID를 씁니다. 도구 설명은 메인 모델에게 새 팀마다 `title`과 `name`을 주라고 안내합니다.
+   - `/team title <team> <제목>`(팀장 세션에서는 `/team title <제목>`)은 `team.json`의 `title`만 바꾸고, Herdr workspace 이름도 `herdr workspace rename`으로 바꿉니다.
 2. 이름을 검증합니다(`[a-z0-9-]{1,32}`, 중복 금지). 미커밋 변경이 있으면 `--from-dirty` 없이는 거부합니다.
    - 추적하지 않는 파일(`??`) 가운데 시작 제외 목록에 맞는 경로는 이 검사에서 건너뜁니다. 목록은 gitignore 문법 파일이며 전역 `~/.pi/agent/teams/start-ignore`와 저장소별 `<repo>/.pi/teams/start-ignore`를 함께 씁니다. 판정은 `git ls-files --others --exclude-standard --directory --exclude-from=<목록>`에 맡깁니다. 도구가 만든 `.gradle/`, `devtools_options.yaml` 같은 파일을 위한 기능입니다.
    - 추적하는 파일의 수정과, 목록에 없는 추적하지 않는 파일(커밋하지 않은 새 소스 등)은 지금처럼 막습니다. 팀은 커밋된 base에서 시작하므로 이런 변경은 팀에 들어가지 않습니다. 거부 오류에는 걸린 경로를 최대 10개 보여 줍니다.
    - 저장소별 `start-ignore` 파일 자체는 커밋하기 전에도 시작을 막지 않습니다. 건너뛴 경로가 있으면 시작 결과에 그 개수를 적습니다. 목록은 `git status` 출력을 바꾸지 않습니다. 저장소에서 아예 숨기려면 `.git/info/exclude`를 씁니다.
 3. worktree를 만듭니다.
-   - **Herdr 안**(`HERDR_PANE_ID` 존재): `herdr worktree create --cwd <repo> --branch pi-team/<team> --base <ref> --label "pi-team <team>" --no-focus`를 실행하고, 출력에서 workspace ID, pane ID, 경로를 얻습니다. 출력 형식은 구현할 때 실제로 확인합니다.
+   - **Herdr 안**(`HERDR_PANE_ID` 존재): `herdr worktree create --cwd <repo> --branch pi-team/<team> --base <ref> --label "<아이콘> <제목>" --no-focus`를 실행하고, 출력에서 workspace ID, pane ID, 경로를 얻습니다. 출력 형식은 구현할 때 실제로 확인합니다.
    - **Herdr 밖:** `git worktree add -b pi-team/<team> <repoParent>/worktrees/<repo>/team-<team> <ref>`
 4. `team.json`을 기록합니다.
 5. 팀장을 실행합니다.
@@ -178,12 +180,12 @@ flowchart TB
 - **팀 정체성:** 팀마다 아이콘(`team.json`의 `icon`)과 설명(`description`)을 둡니다.
   - 아이콘은 `/team start --icon <이모지>` 또는 `team_start`의 `icon`, 별칭의 `icon`, 팀 ID에서 정해지는 기본 동물 이모지 순으로 정합니다. HAM이 에이전트 식별에 쓰는 색 사각형과 겹치지 않도록 기본값은 동물로 둡니다. 두 칸 이하의 글자 하나만 받습니다.
   - 설명은 별칭의 `description`입니다.
-  - widget, board, 팀 패널의 팀 이름 앞에 아이콘을 붙이고, Herdr worktree workspace 이름을 `<아이콘> pi-team <team>`으로 만듭니다.
+  - widget, board, 팀 패널, Herdr는 팀을 `<아이콘> <제목>`으로 표시합니다. ID, preset, 별칭은 board에서만 보여 줍니다(카드의 세 번째 줄, Team 화면 머리줄).
 - **Herdr 사이드바:** Herdr 안의 팀장은 2초마다(바뀔 때만) 자기 pane과 팀 workspace에 출처 `pi-team`으로 메타데이터 토큰 두 개를 보고하고, 종료할 때 지웁니다.
-  - `$team`: 아이콘, 팀 이름, 별칭 이름, 설명(예: `🎨 graphics 그래픽 · UI 시안·이미지·시각 검토`)
+  - `$team`: 아이콘과 제목(예: `🐙 폴더블 시뮬레이터 동작 검증`)
   - `$team_now`: 지금 하는 일(예: `task-1 bash · reviewer-1 waiting for mail · 1 done`, 끝나면 `✓ done · +4 −0`)
   - 토큰은 pane 단위의 평면 맵이므로 pi-team 고유 이름만 쓰고, HAM의 `display_agent`·테두리·토큰은 건드리지 않습니다. 사이드바에 표시하려면 Herdr 설정의 `[ui.sidebar.agents] rows`에 `$team`·`$team_now`, `[ui.sidebar.spaces] rows`에 `$team_now` 줄을 추가합니다. 토큰이 없는 행은 줄이 사라집니다.
-- **widget**(팀이 있을 때만 한 줄): `teams: 🎨 A ▶ 4/5 ✉3 · 🐙 B ✓ done (+120 -14)`
+- **widget**(팀이 있을 때만 한 줄, 제목은 24칸까지): `teams: 🎨 시안 정리 ▶ 4/5 ✉3 · 🐙 폴더블 검증 ✓ done (+120 -14)`
 - **`/team board` overlay**(모든 모드에서 사용 가능, 레지스트리 파일만 읽음, 열려 있는 동안 2초마다 갱신):
   1. **Teams 화면:** 이름, preset, 상태(lead heartbeat로 판정, 10초 동안 없으면 `stale`), 목표, 저장소, worktree 경로, branch, 위치(Herdr workspace 또는 `external`), diff stat, 멤버 수, 메시지 수.
   2. **Team 화면:** 목표와 각 구성원의 역할, member key, 실제 모델(fallback이면 `(fallback)`), 상태, 현재 도구와 경로, 메시지 S/R, 토큰. 아래에 최근 메시지 5개를 보여 줍니다.
@@ -191,10 +193,10 @@ flowchart TB
   4. **Summary 화면:** `summary.md`를 보여 줍니다.
 - **키:** `↑↓`/`Enter`로 이동, `Tab`으로 화면 전환, `s`로 팀장에게 보내기, `Esc`로 닫기.
 - **팀 패널**(`/team panel [on|off|reset]`, `ctrl+shift+t`·`alt+t`, 메인과 팀장 모드):
-  - 입력을 가져가지 않는(`nonCapturing`) overlay입니다. 기본 위치는 오른쪽 위 quota 패널(약 10줄) 아래인 11번째 줄이고 너비는 50입니다. 터미널이 좁거나(너비 90 미만) 낮으면(17줄 미만) 숨깁니다. 패널 바닥은 화면 아래 5줄(widget, 입력창, 상태줄) 위에서 멈추고, 공간이 부족하면 팀 목록을 줄여 그립니다.
+  - 입력을 가져가지 않는(`nonCapturing`) overlay입니다. 기본 위치는 오른쪽 위 quota 패널(약 10줄) 아래인 11번째 줄이고 너비는 60입니다. 터미널이 좁거나(너비 100 미만) 낮으면(17줄 미만) 숨깁니다. 패널 바닥은 화면 아래 5줄(widget, 입력창, 상태줄) 위에서 멈추고, 공간이 부족하면 팀 목록을 줄여 그립니다.
   - 팀마다 다음 순서로 보여 줍니다.
-    1. 머리줄: 상태 기호, 아이콘과 팀 이름(굵게), 설명(없으면 preset), 오른쪽 끝에 진행 요약(`2 working · 1 done`, 끝난 팀은 `done · +4 −0`, 팀장이 응답하지 않으면 `lead offline`). 팀장이 idle이어도 팀원이 작업 중이면 작업 중으로 표시합니다.
-    2. 목표: 최대 두 줄로 줄바꿈합니다.
+    1. 머리줄: 상태 기호, 아이콘과 제목(굵게), 오른쪽 끝에 진행 요약(`2 working · 1 done`, 끝난 팀은 `done · +4 −0`, 팀장이 응답하지 않으면 `lead offline`). 팀장이 idle이어도 팀원이 작업 중이면 작업 중으로 표시합니다.
+    2. 목표: 최대 두 줄로 줄바꿈합니다. 마크다운 기호와 제목 줄은 빼고, 목표에서 제목을 가져왔으면 그 문장은 반복하지 않습니다.
     3. `+` 줄: 메인이 마지막으로 보낸 위임(`main → lead@<team>`)이 있을 때만 표시합니다.
     4. 팀원 목록(들여쓰기): 팀장과 실행 중인 팀원을 최대 5줄 보여 줍니다. 각 줄은 상태 기호, 이름, 지금 하는 일(`bash`, `edit Hero.tsx`, `waiting for mail` 등), 오른쪽 끝의 모델입니다(fallback이면 주황색). 실행 중인 팀원이 있으면 끝난 팀원은 `✓ 3 finished: …` 한 줄로 접습니다.
     5. `✉` 줄: 마지막 팀 메시지입니다.

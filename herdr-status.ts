@@ -2,7 +2,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { createConnection } from 'node:net';
 import { status } from './board.ts';
 import { activity, diffShort, live, oneLine } from './frame.ts';
-import { getTeam, teamIcon, type Team } from './registry.ts';
+import { getTeam, teamIcon, teamTitle, type Team } from './registry.ts';
 
 // The lead publishes who the team is and what it is doing as Herdr metadata tokens, so the
 // agents and spaces sidebars can show `$team` and `$team_now` rows. Tokens are a flat map per
@@ -12,8 +12,7 @@ const REFRESH_MS = 2000;
 const clip = (s: string, n: number) => [...s].length > n ? `${[...s].slice(0, n - 1).join('')}…` : s;
 
 export function teamToken(team: Team) {
-  const label = team.aliasLabel ? ` ${team.aliasLabel}` : '';
-  return clip(`${teamIcon(team)} ${team.id}${label}${team.description ? ` · ${oneLine(team.description)}` : ''}`, 80);
+  return clip(`${teamIcon(team)} ${teamTitle(team)}`, 80);
 }
 export function nowToken(d: ReturnType<typeof status>) {
   if (d.state === 'done') return ['✓ done', diffShort(d.diff)].filter(Boolean).join(' · ');

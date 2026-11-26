@@ -46,14 +46,17 @@ Color only carries state. Gold marks "this is pi-team" and "this is what you cho
 
 ## Components
 
-- Team card (board Teams view): status glyph, bold name, description or preset; right: headline
-  summary. Goal (2 lines, bright only when selected), counts line, worktree · branch line.
+- Team title: every surface names a team by icon + title (`teamLabel`, `teamTitle`): the title given at
+  start, else the goal's first sentence, else the ID. The ID, preset and alias appear only on the board.
+- Team card (board Teams view): status glyph, bold icon + title; right: headline summary. Goal (2 lines,
+  bright only when selected, without the sentence used as title), `id · preset · alias` line, counts line,
+  worktree · branch line.
   Cards are separated by a blank row, not a rule.
 - Roster (board Team view): ROLE, MEMBER (only when a key differs from its role), STATE, NOW,
   MODEL, MAIL, TOKENS. Headers in `dim` capitals; columns sized to content; NOW shows `—` when it
   would repeat the state.
 - Thread (board Messages view): first message bold `from → to` and subject; replies indented four
   more columns; right side shows delivery state and `HH:MM`.
-- Panel team block: headline row, goal (2 lines, 1 when done), up to 5 live members, a folded
+- Panel team block (60 columns): headline row (icon + title only), goal (2 lines, 1 when done), up to 5 live members, a folded
   "N finished" line, latest mail. Teams separated by a plain rule.
 - `headline()` is the single reading of a team's state; reuse it on every surface.

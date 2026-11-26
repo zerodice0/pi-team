@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { realpathSync } from 'node:fs';
 import { aliasHints, delegate, readTargets, resolveTarget, showAliases, startNamed, type TeamTargets } from './aliases.ts';
 import { board, status, widget } from './board.ts';
-import { closeTeam, findSummary, parseStart, report, roleList, splitGoal } from './lifecycle.ts';
+import { closeTeam, findSummary, parseStart, report, retitle, roleList, splitGoal } from './lifecycle.ts';
 import { registerMailbox, send, sendParams } from './mailbox.ts';
 import { teamPanel } from './panel.ts';
 import { herdrStatus } from './herdr-status.ts';
@@ -77,6 +77,9 @@ function registerMainLoader(pi: ExtensionAPI, refresh: () => void, targets: Team
     ? `Only call when the user expressly asks you to create or manage a Pi team or to delegate work to a named team. Configured team aliases: ${hints}. Use team_delegate for named-team delegation even if the team already exists.`
     : 'Only call when the user expressly asks you to create or manage a Pi team.';
   const toolNames = ['team_start', 'team_status', 'team_send', 'team_delegate'];
+  // People tell teams apart by title; the name only becomes the branch and address.
+  const title = Type.Optional(Type.String({ description: 'Short title of the work for the panel, board and Herdr, in the user\'s language, about 15-40 characters, e.g. "폴더블 시뮬레이터 동작 검증". Always give one for a new team.' }));
+  const name = Type.Optional(Type.String({ description: 'Team ID for the branch and addresses: 2-4 English words, e.g. foldable-sim-check (lowercased and hyphenated, at most 32 characters). Always give one for a new team unless you name an alias.' }));
   let installed = false;
   pi.on('session_shutdown', () => { installed = false; });
   pi.registerTool({ name: 'team_enable', label: 'Enable team tools',
@@ -84,16 +87,16 @@ function registerMainLoader(pi: ExtensionAPI, refresh: () => void, targets: Team
     async execute() {
       if (!installed) {
         pi.registerTool({ name: 'team_start', label: 'Start team', description: 'Create a new Pi team from a preset or alias and give the user its interactive lead. Only when explicitly requested.',
-          parameters: Type.Object({ preset: Type.String(), name: Type.Optional(Type.String()), base: Type.Optional(Type.String()), fromDirty: Type.Optional(Type.Boolean()), goal: Type.String(), icon: Type.Optional(Type.String({ description: 'One emoji that identifies the team, if the user asked for one.' })) }),
+          parameters: Type.Object({ preset: Type.String(), title, name, base: Type.Optional(Type.String()), fromDirty: Type.Optional(Type.Boolean()), goal: Type.String(), icon: Type.Optional(Type.String({ description: 'One emoji that identifies the team, if the user asked for one.' })) }),
           async execute(_id, p, _signal, _update, ctx) { const result = startNamed(ctx.cwd, targets, p); refresh(); return text(result + gapNote(ctx, targets, cwd, p.preset)); } });
         pi.registerTool({ name: 'team_status', label: 'Team status', description: 'Read active team registry or the selected team summary.', parameters: Type.Object({ team: Type.Optional(Type.String()) }),
           async execute(_id, p) { return text(JSON.stringify(teamStatus(p.team))); } });
         pi.registerTool({ name: 'team_send', label: 'Send to team lead', description: 'Send a direct message to an exact lead@<team> address. For assigning work to a named team, use team_delegate instead, even if you know its address.', parameters: sendParams,
           async execute(_id, p) { return text(JSON.stringify(send(undefined, p))); } });
         pi.registerTool({ name: 'team_delegate', label: 'Delegate to a team', description: 'Use this for every request to assign work to a named team, including follow-up assignments. Pass the alias key or natural-language name even if you know an existing team ID. This tool selects the current team or starts one. A bare preset starts a new team. Ask the user before using fromDirty. Relay any lead launch command to the user.',
-          parameters: Type.Object({ team: Type.String(), task: Type.String(), fromDirty: Type.Optional(Type.Boolean({ default: false })) }),
+          parameters: Type.Object({ team: Type.String(), task: Type.String(), title, name, fromDirty: Type.Optional(Type.Boolean({ default: false })) }),
           async execute(_id, p, _signal, _update, ctx) {
-            const result = delegate(ctx.cwd, targets, p.team, p.task, p.fromDirty);
+            const result = delegate(ctx.cwd, targets, p.team, p.task, p.fromDirty, { title: p.title, name: p.name });
             refresh();
             return text(result + gapNote(ctx, targets, cwd, p.team));
           } });
@@ -279,6 +282,13 @@ export default async function piTeam(pi: ExtensionAPI) {
         return show(ctx, presetView(catalog.presets, ctx, args.split(/\s+/)[1], catalog));
       }
       if (main && verb === 'main') return show(ctx, await main.command(args, ctx));
+      if (verb === 'title') {
+        // A lead retitles its own team; the main session names the team first.
+        const m = team ? /^([\s\S]+)$/.exec(args.trim()) : /^(\S+)\s+([\s\S]+)$/.exec(args.trim());
+        if (!m) throw new Error(team ? 'Usage: /team title <title>' : 'Usage: /team title <team> <title>');
+        const output = team ? retitle(team.id, m[1]) : retitle(m[1], m[2]);
+        refresh(); return show(ctx, output);
+      }
       if (verb === 'send') {
         const m = /^(\S+)\s+(?:--\s+)?([\s\S]+)$/.exec(args);
         if (!m) throw new Error('Usage: /team send <address> [--] <message>');
@@ -310,7 +320,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         pi.sendMessage({ customType: 'pi-team-summary', content: summary, display: true, details: { team: args } }, { deliverAs: 'nextTurn' });
         return show(ctx, `Queued ${args} summary for the next user turn (no model request).`);
       }
-      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | send <address> <body>${team ? ' | done [summary]' : ' | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
+      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | send <address> <body>${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
     } catch (e) { if (ctx.hasUI) ctx.ui.notify(e instanceof Error ? e.message : String(e), 'error'); else throw e; }
   } });
 }

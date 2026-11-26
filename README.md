@@ -17,6 +17,7 @@
 - **팀 패널(`ctrl+shift+t`·`alt+t`):** 대화를 계속하면서 볼 수 있도록 화면 오른쪽에 떠 있는 패널입니다. 팀마다 진행 요약, 목표, 메인이 마지막으로 보낸 위임, 팀장과 팀원이 지금 하는 일과 모델, 마지막 메시지를 보여 줍니다. fullscreen 모드(pi 기본값)에서는 제목 줄을 마우스로 끌어 옮길 수 있고, 옮긴 위치는 기억합니다.
 - **Herdr 연동:** [Herdr](https://herdr.dev) 안에서 실행하면 팀마다 `herdr worktree create`로 workspace를 만들고 팀장을 실행합니다. Herdr 밖에서는 worktree만 만들고 팀장 실행 명령을 안내합니다.
 - **팀 별칭:** 「그래픽 팀에게 위임해 줘」처럼 자연어로 팀을 지정해 위임할 수 있습니다.
+- **팀 제목:** 패널, board, widget, Herdr는 팀 ID 대신 「🐙 폴더블 시뮬레이터 동작 검증」처럼 아이콘과 제목으로 팀을 보여 줍니다. 메인 모델은 팀을 만들 때 제목(`title`)과 영어 ID(`name`)를 함께 정하고, 제목이 없으면 목표의 첫 문장을 씁니다. `/team title`로 언제든 바꿀 수 있습니다.
 - **팀 아이콘과 Herdr 표시:** 팀마다 아이콘(별칭의 `icon`, `--icon`, 또는 기본 동물 이모지)과 설명이 붙습니다. Herdr 안의 팀장은 사이드바용 토큰 `$team`(무슨 팀인지)과 `$team_now`(지금 하는 일)를 보고합니다.
 
 ## 설치
@@ -33,7 +34,8 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 
 | 명령 | 설명 |
 |---|---|
-| `/team start <preset or alias> [--name X] [--base REF] [--icon 🎨] -- <목표>` | 팀을 만들고 팀장을 띄웁니다. |
+| `/team start <preset or alias> [--title 제목] [--name X] [--base REF] [--icon 🎨] -- <목표>` | 팀을 만들고 팀장을 띄웁니다. `--title`은 다음 옵션 전까지의 단어를 모두 제목으로 씁니다. `--name`은 팀 ID(영어 한 단어, 소문자·하이픈으로 정리)입니다. |
+| `/team title <team> <제목>` | 팀 제목을 바꿉니다. 팀장 세션에서는 `/team title <제목>`입니다. ID, branch, 주소는 그대로이고 Herdr workspace 이름도 함께 바뀝니다. |
 | `/team delegate <alias> -- <작업>` | 별칭에 해당하는 기존 팀에 작업을 보내고, 팀이 없으면 새로 만듭니다. |
 | `/team stats [role]` · `/team stats import` · `/team stats retro <team>` | 역할별 실행 기록(턴 수, 최대 문맥, 캐시 읽기, 비용)과 스킬 사용(목록에 실렸는지, 실제로 읽혔는지)을 보여 줍니다. `import`는 기록 기능이 생기기 전에 끝난 팀의 세션 파일에서 기록을 만듭니다(`--dry-run` 지원). `retro`는 한 팀의 회고 초안을 보여 줍니다. |
 | `/team board` | 상태판 overlay를 엽니다. 팀 패널과 같은 테두리와 색을 쓰며, 위쪽 테두리의 탭으로 Teams·Team·Messages·Summary를 고릅니다. `↑↓` 선택·스크롤, `PgUp`/`PgDn` 페이지 이동, `enter` 팀 열기, `←→` 다른 팀, `tab`/`shift+tab` 보기 전환, `s` 팀장에게 메시지, `esc` 닫기입니다. |
