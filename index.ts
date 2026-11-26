@@ -14,7 +14,7 @@ import { herdrStatus } from './herdr-status.ts';
 import { participant, type ParticipantRuntime } from './participant.ts';
 import { childEntry, generateAgents, imageDisabled, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
 import { skillCatalog, skillSize } from './skills.ts';
-import { backfillStats, loadStats, roleSkills, statsReport, trackRun } from './stats.ts';
+import { backfillStats, loadStats, retroAsk, retroReport, roleSkills, statsReport, trackRun, writeRetro } from './stats.ts';
 import { errorCode, getTeam, git, isLive, members, teamDir, teams, text, writeJson, type FleetEntry, type Team } from './registry.ts';
 
 interface Registration { dispose(): void }
@@ -245,7 +245,15 @@ export default async function piTeam(pi: ExtensionAPI) {
       } });
     pi.registerTool({ name: 'team_report', label: 'Team report', description: 'Save the team summary and gathered outcomes to summary.md. Use status done on completion.',
       parameters: Type.Object({ summary: Type.String(), status: Type.String() }),
-      async execute(_id, p) { const path = report(team, p.summary, p.status); if (p.status === 'done') lead.update('done'); return text(path); } });
+      async execute(_id, p) {
+        const path = report(team, p.summary, p.status);
+        if (p.status !== 'done') return text(path);
+        lead.update('done');
+        // A retrospective draft from the run records; the lead turns only lasting patterns into lessons.
+        const retro = retroReport(team.id);
+        writeRetro(team.id, retro);
+        return text([path, '', retro, '', retroAsk].join('\n'));
+      } });
   }
   const show = (ctx: ExtensionContext, output: string) => { if (ctx.hasUI) ctx.ui.notify(output, 'info'); else process.stdout.write(`${output}\n`); };
   pi.registerCommand('team', { description: 'Start, inspect, message or close a Pi team', async handler(input, ctx) {
@@ -254,6 +262,7 @@ export default async function piTeam(pi: ExtensionAPI) {
       if (verb === 'board') { try { await board(ctx, team?.id, state?.owner()); } finally { refresh(); } return; }
       if (verb === 'panel') return panel.command(args.trim(), ctx);
       if (verb === 'stats' && /^import(\s+--dry-run)?$/.test(args.trim())) return show(ctx, backfillStats(args.includes('--dry-run')));
+      if (verb === 'stats' && /^retro\s+\S+$/.test(args.trim())) return show(ctx, retroReport(args.trim().split(/\s+/)[1]));
       if (verb === 'stats') return show(ctx, statsReport(loadStats(), args.trim() || undefined));
       if (verb === 'preset' && /^show(?:\s+\S+)?$/.test(args)) return show(ctx, presetView(team ? presets : readPresets(configCwd), ctx, args.split(/\s+/)[1]));
       if (verb === 'send') {
@@ -286,7 +295,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         pi.sendMessage({ customType: 'pi-team-summary', content: summary, display: true, details: { team: args } }, { deliverAs: 'nextTurn' });
         return show(ctx, `Queued ${args} summary for the next user turn (no model request).`);
       }
-      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import] | preset show [preset] | send <address> <body>${team ? ' | done [summary]' : ' | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
+      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | send <address> <body>${team ? ' | done [summary]' : ' | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
     } catch (e) { if (ctx.hasUI) ctx.ui.notify(e instanceof Error ? e.message : String(e), 'error'); else throw e; }
   } });
 }

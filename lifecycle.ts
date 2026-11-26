@@ -3,6 +3,7 @@ import { dirname, basename, isAbsolute, join, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { generateAgents, imageDisabled, readPresets, type Presets } from './presets.ts';
 import { leadSkillArgs } from './skills.ts';
+import { retroReport, writeRetro } from './stats.ts';
 import { appendLedger, checkIcon, defaultIcon, diffStat, exec, exists, getLead, getTeam, git, isLive, ledger, locked, log, members, mkdir, readText, root, teamDir, teams, writeAtomic, writeJson, type Team, type LedgerEntry } from './registry.ts';
 
 export interface Start { preset: string; name?: string; base?: string; fromDirty?: boolean; goal: string; icon?: string }
@@ -80,6 +81,7 @@ const leanLead = [
   '- Look at an image yourself only when you must judge it for the user, and not the same image twice.',
   '- For a follow-up on the same files, resume the member that did the previous round instead of starting a fresh one that has to reread everything: find its exact run id with subagent action "status" or "children.list" (a "Mission" id is not a run id), then call action "resume" with that id and a message. Start a fresh member only for a different role, when resume is rejected, or when the previous one has a very large context.',
   '- Call team_peers only when you need addresses or states.',
+  '- When you finish with team_report status done, you get a retrospective draft built from the run records; follow its instructions briefly.',
   '- When a task needs knowledge a role does not carry, search installed skills with team_skills and give that one member the extra skills through the subagent skill option. New skills are not installed during a team run; mention the gap in your report instead.',
 ].join('\n');
 
@@ -212,6 +214,8 @@ export function closeTeam(id: string, confirmLead: boolean, confirmUnmerged: boo
     if (!merged && !confirmUnmerged) throw new Error('Branch is not merged into its base. Use --confirm-unmerged to retain the branch and remove only the worktree.');
     if (git(team.worktree, ['status', '--porcelain'])) throw new Error('Worktree is dirty. Commit or remove the changes before closing.');
     const dir = teamDir(id);
+    // Keep a retrospective draft with the archive, refreshed with the final run records.
+    writeRetro(id, retroReport(id), dir);
     const archive = join(root, 'archive', id);
     const mailLock = join(root, '.mail.lock');
     const pending = locked(mailLock, () => {

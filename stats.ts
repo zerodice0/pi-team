@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { mkdir, readJson, root, writeJson, type Participant, type Snapshot, type Team } from './registry.ts';
 
@@ -14,7 +14,26 @@ export interface RunStat {
   task?: string; startedAt: number; endedAt: number; state: string; resumed: boolean; models: string[];
   turns: number; tokens: { input: number; cacheRead: number; cacheWrite: number; output: number }; cost: number; maxContext: number;
   skills: { listed: string[]; listedChars: number; extra?: string[]; read: SkillRead[] };
+  // Members only: headings the lead's brief left out, and headings missing from the member's final report.
+  brief?: { chars: number; missing: string[] };
+  report?: { chars: number; missing: string[] };
 }
+export const briefHeadings = ['Goal', 'Background', 'Read first', 'Do', 'Do not', 'Done when', 'Limits', 'Report'];
+export const reportHeadings = ['Result', 'Checks', 'Open issues', 'Changed files', 'Artifacts'];
+// A heading counts as markdown (#, ##, ...) or a bold label at the start of a line.
+const missingHeadings = (text: string, names: string[]) => names.filter(name => {
+  const n = name.replace(/ /g, '\\s+');
+  // pi-subagents prefixes the task with "Task: ", which puts the first heading mid-line.
+  return !new RegExp(`^\\s*(?:Task:\\s*)?(?:#{1,6}\\s*|\\*\\*)${n}\\s*(?:\\*\\*|:|-|—|–|\\(|$)`, 'im').test(text);
+});
+export const briefCheck = (task: string) => ({ chars: task.length, missing: missingHeadings(task, briefHeadings) });
+export const reportCheck = (result: string | undefined) => ({ chars: result?.length ?? 0, missing: missingHeadings(result ?? '', reportHeadings) });
+const ended = (state: string) => state === 'done' || state === 'failed' || state === 'stopped';
+// Briefs written before the standard form use other headings; judge missing headings only on briefs
+// that follow the form at all. A report is silent when the member left almost no final text.
+const inForm = (b?: { missing: string[] }) => !!b && b.missing.length < briefHeadings.length;
+const silentReport = (r?: { chars: number }) => !!r && r.chars < 80;
+const formalReport = (r?: { chars: number; missing: string[] }) => !!r && !silentReport(r) && r.missing.length === 0;
 // pi-subagents and pi both list skills as <skill><name/><description/><location/></skill>.
 export function listedSkills(prompt: string) {
   const block = /<available_skills>[\s\S]*?<\/available_skills>/.exec(prompt)?.[0] ?? '';
@@ -36,6 +55,7 @@ export function trackRun(pi: ExtensionAPI, team: Team, row: () => Participant | 
     const p = row();
     if (!stat || !p) return;
     stat.key = p.key; stat.state = p.state; stat.endedAt = Date.now();
+    if (stat.role !== 'orchestrator' && ended(p.state)) stat.report = reportCheck(p.error ? undefined : p.result);
     try { mkdir(statsDir); writeJson(file()!, stat); } catch { /* statistics never block the team */ }
   };
   pi.on('session_start', (_e, ctx) => {
@@ -56,7 +76,10 @@ export function trackRun(pi: ExtensionAPI, team: Team, row: () => Participant | 
     listed = found.skills;
     stat.skills.listed = [...new Set([...stat.skills.listed, ...listed.map(s => s.name)])];
     stat.skills.listedChars = Math.max(stat.skills.listedChars, found.chars);
-    if (!stat.task && event.messageType === 'user') stat.task = event.prompt.replace(/\s+/g, ' ').trim().slice(0, 240);
+    if (!stat.task && event.messageType === 'user') {
+      stat.task = event.prompt.replace(/\s+/g, ' ').trim().slice(0, 240);
+      if (stat.role !== 'orchestrator') stat.brief = briefCheck(event.prompt);
+    }
   });
   pi.on('turn_end', event => {
     if (!stat || event.message.role !== 'assistant') return;
@@ -131,6 +154,13 @@ export function statsReport(stats: RunStat[], only?: string) {
     const retire = listed.filter(u => u.listed >= MIN_RUNS && u.read === 0).map(u => u.name);
     const adopted = listed.filter(u => u.listed >= MIN_RUNS && u.read / u.listed >= 0.5).map(u => u.name);
     const assign = uses.filter(u => u.unlisted > 0).map(u => `${u.name} (${u.unlisted} runs, ${k(u.readChars / Math.max(1, u.read))} chars)`);
+    const briefed = runs.filter(r => r.brief);
+    const formed = briefed.filter(r => inForm(r.brief));
+    const gaps = formed.flatMap(r => r.brief!.missing).reduce<Record<string, number>>((m, h) => (m[h] = (m[h] ?? 0) + 1, m), {});
+    if (briefed.length) lines.push(`  briefs in the standard form: ${formed.length}/${briefed.length}${Object.keys(gaps).length ? `; missing ${Object.entries(gaps).map(([h, n]) => `${h} ${n}/${formed.length}`).join(', ')}` : ''}`);
+    const finished = runs.filter(r => r.report);
+    const silent = finished.filter(r => silentReport(r.report));
+    if (finished.length) lines.push(`  reports in the standard form: ${finished.filter(r => formalReport(r.report)).length}/${finished.length}${silent.length ? `; ended without a report: ${silent.map(r => `${r.team}/${r.key} ${r.state}`).join(', ')}` : ''}`);
     if (adopted.length) lines.push(`  adopted (read in half or more): ${adopted.join(', ')}`);
     if (retire.length) lines.push(`  retire candidates (listed ${MIN_RUNS}+ runs, never read): ${retire.length > 12 ? `${retire.slice(0, 12).join(', ')}, … (${retire.length})` : retire.join(', ')}`);
     if (assign.length) lines.push(`  assign candidates (read without being listed): ${assign.join(', ')}`);
@@ -162,6 +192,7 @@ function fromSession(team: Team, p: Participant): RunStat | undefined {
     } else if (m.role === 'user' && !stat.task) {
       const text = typeof m.content === 'string' ? m.content : (m.content ?? []).map((c: any) => c.text ?? '').join(' ');
       stat.task = text.replace(/\s+/g, ' ').trim().slice(0, 240);
+      if (p.role !== 'orchestrator') stat.brief = briefCheck(text);
     } else if (m.role === 'assistant' && m.usage) {
       const u = m.usage;
       stat.turns++;
@@ -182,6 +213,7 @@ function fromSession(team: Team, p: Participant): RunStat | undefined {
       if (!stat.skills.listed.includes(read.name)) stat.skills.extra = [...new Set([...(stat.skills.extra ?? []), read.name])];
     }
   }
+  if (p.role !== 'orchestrator' && ended(p.state)) stat.report = reportCheck(p.error ? undefined : p.result);
   return stat.turns ? stat : undefined;
 }
 export function backfillStats(dry = false) {
@@ -212,4 +244,63 @@ export function backfillStats(dry = false) {
   }
   out.push(`${dry ? 'would write' : 'wrote'} ${written} records, kept ${kept} existing, from ${dirs.length} team directories`);
   return out.join('\n');
+}
+
+// A retrospective draft for one team, computed from its run records and compared with the same
+// roles in other teams. It costs no model tokens; the lead decides what, if anything, becomes a lesson.
+export function retroReport(teamId: string, all = loadStats()) {
+  const runs = all.filter(s => s.team === teamId);
+  if (!runs.length) return `No run records for team ${teamId}.`;
+  const others = all.filter(s => s.team !== teamId);
+  const total = runs.reduce((n, r) => n + r.cost, 0);
+  const lines = [`# Retrospective draft: ${teamId}`, '',
+    `${runs.length} runs · $${total.toFixed(2)} · ${runs.reduce((n, r) => n + r.turns, 0)} turns · cache read ${k(runs.reduce((n, r) => n + r.tokens.cacheRead, 0))}`, '', '## Runs'];
+  for (const r of [...runs].sort((a, b) => a.startedAt - b.startedAt)) {
+    const read = [...new Set(r.skills.read.map(x => x.name))];
+    const unread = r.skills.listed.filter(n => !read.includes(n)).length;
+    const flags = [
+      r.brief ? !inForm(r.brief) ? 'brief not in the standard form' : r.brief.missing.length ? `brief missing ${r.brief.missing.join(', ')}` : '' : '',
+      r.report ? silentReport(r.report) ? 'no report' : !formalReport(r.report) ? 'report not in the standard form' : '' : '',
+      r.skills.extra?.length ? `looked up unlisted ${r.skills.extra.join(', ')}` : '',
+    ].filter(Boolean);
+    lines.push(`- ${r.key} (${r.role}, ${r.state}${r.resumed ? ', resumed' : ''}): ${r.turns} turns, max context ${k(r.maxContext)}, $${r.cost.toFixed(2)}; skills read ${read.join(', ') || 'none'}${unread ? `, ${unread} listed never read` : ''}${flags.length ? `; ${flags.join('; ')}` : ''}`);
+  }
+  const notes: string[] = [];
+  const roles = [...new Set(runs.map(r => r.role))];
+  for (const role of roles) {
+    const mine = runs.filter(r => r.role === role);
+    const past = others.filter(r => r.role === role);
+    if (mine.length > 1) notes.push(`${role} ran ${mine.length} times in this team: check whether resuming one member would have avoided rereading (${mine.map(r => k(r.maxContext)).join(', ')} max context).`);
+    if (past.length >= 3) {
+      const ratio = avg(mine.map(r => r.cost)) / Math.max(1e-9, avg(past.map(r => r.cost)));
+      if (ratio >= 2 || ratio <= 0.5) notes.push(`${role} cost ${ratio.toFixed(1)}x its average over ${past.length} runs in other teams.`);
+    }
+    const listed = [...new Set(mine.flatMap(r => r.skills.listed))];
+    const never = listed.filter(n => !mine.some(r => r.skills.read.some(x => x.name === n)));
+    if (never.length >= 5) notes.push(`${role} carried ${never.length} skills it never read (${never.slice(0, 5).join(', ')}, …): see /team stats ${role} before trimming the role.`);
+  }
+  const silent = runs.filter(r => silentReport(r.report));
+  if (silent.length) notes.push(`Ended without a report: ${silent.map(r => `${r.key} (${r.state}${inForm(r.brief) && r.brief!.missing.includes('Limits') ? ', brief had no Limits' : ''})`).join(', ')}.`);
+  const briefed = runs.filter(r => r.brief);
+  const outside = briefed.filter(r => !inForm(r.brief));
+  if (outside.length) notes.push(`${outside.length} of ${briefed.length} briefs were not in the standard form.`);
+  const gaps = [...new Set(briefed.filter(r => inForm(r.brief)).flatMap(r => r.brief!.missing))];
+  if (gaps.length) notes.push(`Standard-form briefs left out: ${gaps.join(', ')}.`);
+  const reported = runs.filter(r => r.report && !silentReport(r.report));
+  const loose = reported.filter(r => !formalReport(r.report));
+  if (loose.length) notes.push(`${loose.length} of ${reported.length} reports were not in the standard form.`);
+  const extra = runs.flatMap(r => (r.skills.extra ?? []).map(n => `${n} (${r.role})`));
+  if (extra.length) notes.push(`Members looked up skills their role does not list: ${[...new Set(extra)].join(', ')}.`);
+  lines.push('', '## Signals', ...(notes.length ? notes.map(n => `- ${n}`) : ['- Nothing stands out.']));
+  return lines.join('\n');
+}
+export const retroAsk = [
+  'Review this retrospective draft before you finish:',
+  '- Record a lesson with lesson_record only for a pattern that should change how future teams are set up or briefed (topic team-roles for any repository, or the repository\'s proj- topic). One-off events are not lessons. If lesson_record is unavailable, list the lesson candidates in your reply instead.',
+  '- If members lacked knowledge that no installed skill covers, run `npx skills find <keywords>` and add the best candidates (name, installs, link) to the team summary as candidates for the user. Do not install anything.',
+  '- Tell the user in two or three lines what the draft shows.',
+].join('\n');
+// Saved beside summary.md so it is archived with the team; stats records stay in teams/stats.
+export function writeRetro(teamId: string, retro: string, dir = join(root, teamId)) {
+  try { writeFileSync(join(dir, 'retro.md'), `${retro}\n`); } catch { /* the draft is a convenience */ }
 }
