@@ -126,10 +126,11 @@ export function leadCompaction(pi: ExtensionAPI, compactAt: number) {
   if (!(compactAt > 0)) return;
   turnCompaction(pi, { threshold: window => Math.min(compactAt, window * 0.8), instructions: leadInstructions, who: 'lead', settle: true });
 }
-// Members compact at a share of the context window of the model they run on (PI_TEAM_MEMBER_COMPACT_RATIO,
-// default 0.4). A member exits when its run ends, so it does not compact after settling.
+// Members compact at a share of the context window of the model they run on (PI_TEAM_MEMBER_COMPACT_RATIO).
+// The default 0.2 matches the lead's 200k on the 1M-token windows teams use; 0.4 would let a member reach
+// 400k. A member exits when its run ends, so it does not compact after settling.
 export function memberCompaction(pi: ExtensionAPI) {
-  const ratio = Number(process.env.PI_TEAM_MEMBER_COMPACT_RATIO ?? 0.4);
+  const ratio = Number(process.env.PI_TEAM_MEMBER_COMPACT_RATIO ?? 0.2);
   if (!(ratio > 0 && ratio < 1)) return;
   turnCompaction(pi, { threshold: window => Math.round(window * ratio), instructions: memberInstructions, who: 'member', settle: false });
 }
