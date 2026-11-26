@@ -111,6 +111,14 @@ flowchart TB
   - `model` 인자가 있는 호출
   - `pi-team.<현재 preset>-*`가 아닌 agent를 지정한 호출
 
+### 임시 라우팅 조정(`overrides.ts`, `routing.ts`)
+
+- `/team effort`와 `/team model`은 역할별 임시 조정을 `teams/<id>/overrides.json`(팀) 또는 `teams/main-overrides/<세션 ID>.json`(메인 모드)에 저장합니다. preset 파일은 바꾸지 않으므로 팀을 닫거나 메인 모드를 끄면 사라집니다. 메인 모드 파일은 14일 동안 바뀌지 않으면 지웁니다.
+- router는 요청마다 자기 범위의 파일을 읽습니다. 팀장과 구성원은 `PI_TEAM_ID`, 메인 모드에서 위임한 자식은 메인 세션이 설정한 `PI_TEAM_MAIN_KEY`로 범위를 정합니다. 그래서 이미 실행 중인 구성원도 다음 요청부터 바뀐 값을 씁니다.
+- 모델 조정은 후보 맨 앞에 붙고, 같은 모델의 기존 후보는 빠집니다. effort 조정은 고른 후보의 수준을 대신합니다.
+- 팀장은 처음 시작할 때 첫 후보의 effort로 thinking 수준을 맞추고, 그 값을 세션 항목 `pi-team-lead-level`에 남깁니다(재개도 `startup`으로 시작하므로 덮어쓰지 않기 위해서입니다). 사용자가 `shift+tab`이나 `/team effort orchestrator`로 다른 수준을 고르면 router가 그 값을 따릅니다. 우선순위는 팀장 세션의 선택, 파일 조정, 후보의 수준 순입니다.
+- 구성원 기록(`lead.json`, `members/*.json`)에 실제 실행된 수준(`level`)을 남겨, 패널과 board의 모델 칸에 `opus-5-5·high`처럼 표시합니다. 패널의 모델 칸은 17칸입니다.
+
 ### 메인 모드(`main.ts`)
 
 - `/team main <preset>`은 orchestrator 후보 가운데 로그인되어 있고 cooldown 중이 아닌 첫 모델을 `pi.setModel`로, 그 사고 수준을 `pi.setThinkingLevel`로 지정합니다. 실제 모델을 고정하므로 사용자의 사고 수준 변경과 pi의 캐시 데우기가 그대로 동작합니다.

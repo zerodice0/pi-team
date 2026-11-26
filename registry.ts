@@ -89,7 +89,7 @@ export interface Participant {
   key: string; role: string; pid: number; sessionId: string; sessionFile?: string; at: number;
   startedAt?: number; waitSince?: number;
   state: 'idle' | 'working' | 'waiting' | 'done' | 'failed' | 'stopped';
-  model?: string; fallback?: boolean; tool?: string; path?: string; tokens: number; sideEffects: boolean;
+  model?: string; level?: string; fallback?: boolean; tool?: string; path?: string; tokens: number; sideEffects: boolean;
   result?: string; error?: string; diff?: string; changedPaths?: string[];
 }
 export interface FleetEntry { key: string; agent: string; model?: string; startedAt?: number; tokens?: { total?: number } }

@@ -8,7 +8,7 @@ export interface ParticipantRuntime {
   row(): Participant | undefined;
   owner(): { team: string; key: string } | undefined;
   update(state: Participant['state']): void;
-  routed(model: string, didFallback: boolean): void;
+  routed(model: string, didFallback: boolean, level?: string): void;
 }
 
 export function participant(pi: ExtensionAPI, team: Team, role: () => string | undefined, lead = false, maxForRole?: (role: string) => number | undefined): ParticipantRuntime {
@@ -18,6 +18,7 @@ export function participant(pi: ExtensionAPI, team: Team, role: () => string | u
   let terminal: AssistantMessage | undefined;
   let failure: AssistantMessage | undefined;
   let lastModel: string | undefined;
+  let lastLevel: string | undefined;
   let fallback: boolean | undefined;
   let stopped = false;
   let finished = false;
@@ -34,9 +35,9 @@ export function participant(pi: ExtensionAPI, team: Team, role: () => string | u
     row.state = state;
     persist();
   };
-  const routed = (model: string, didFallback: boolean) => {
-    lastModel = model; fallback = didFallback;
-    if (row) { row.model = model; row.fallback = didFallback; persist(); }
+  const routed = (model: string, didFallback: boolean, level?: string) => {
+    lastModel = model; lastLevel = level; fallback = didFallback;
+    if (row) { row.model = model; row.level = level; row.fallback = didFallback; persist(); }
   };
   const diff = () => {
     if (!row || !lead) return;
@@ -74,7 +75,7 @@ export function participant(pi: ExtensionAPI, team: Team, role: () => string | u
       const now = Date.now();
       finished = false;
       row = { key, role: partRole, sessionId, sessionFile, pid: process.pid, at: now, startedAt: now, state: 'idle', tokens: previous?.tokens ?? 0,
-        model: lastModel, fallback, sideEffects: previous?.sideEffects ?? false, changedPaths: previous?.changedPaths };
+        model: lastModel, level: lastLevel, fallback, sideEffects: previous?.sideEffects ?? false, changedPaths: previous?.changedPaths };
       diff(); persist();
     });
     if (lead) timer = setInterval(() => { diff(); persist(); }, 2_000).unref();
@@ -86,6 +87,9 @@ export function participant(pi: ExtensionAPI, team: Team, role: () => string | u
     terminal = m;
     row.tokens += m.usage?.totalTokens ?? 0;
     row.model = m.provider !== 'team' ? `${m.provider}/${m.model}` : lastModel;
+    // The level the provider actually ran at (pi clamps to the model), falling back to the routed one.
+    const ran = (m as { thinkingLevel?: string }).thinkingLevel;
+    row.level = ran ?? lastLevel;
     persist();
   });
   pi.on('tool_execution_start', e => {

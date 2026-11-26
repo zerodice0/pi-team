@@ -1,7 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { join } from 'node:path';
+import { readdirSync, rmSync, statSync } from 'node:fs';
 import { authGaps, candidates, imageDisabled, mainAgentName, recordCooldown, roleAgent, unknownPreset, type Presets } from './presets.ts';
 import { readJson, remove, root, writeJson } from './registry.ts';
+import { readOverrides, routeTable, scopePath } from './overrides.ts';
+import type { RouteTarget } from './routing.ts';
 
 // Main mode: the main session runs on a preset's orchestrator as a fixed physical model (so the
 // thinking level, cache warming and cache stay as usual) and can delegate to that preset's roles
@@ -11,9 +14,21 @@ const entryType = 'pi-team-main';
 const defaultPath = join(root, 'main.json');
 const overflow = /context(?:[ _-]window| length)|too long|maximum context|prompt is too long/i;
 
+// Sessions that never left main mode leave their override files behind; drop ones idle for two weeks.
+function pruneOverrides() {
+  const dir = join(root, 'main-overrides');
+  try {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      if (Date.now() - statSync(path).mtimeMs > 14 * 86_400_000) rmSync(path, { force: true });
+    }
+  } catch { /* nothing to prune */ }
+}
 export function mainMode(pi: ExtensionAPI, load: () => Presets, cwd: string) {
   let preset: string | undefined;
   let roles: string[] = [];
+  // Children inherit this, so their routers read this session's overrides (/team effort, /team model).
+  let key = '';
   const active = new Map<string, Registration>();
   const asked = new Set<number>();
   const unregister = () => { for (const r of active.values()) r.dispose(); active.clear(); roles = []; };
@@ -50,11 +65,18 @@ export function mainMode(pi: ExtensionAPI, load: () => Presets, cwd: string) {
     preset = name;
     pi.appendEntry(entryType, { preset: name });
     const gaps = authGaps(presets[name], ctx.modelRegistry);
-    return [`Main mode ${name}: ${pick.key}:${pick.level}${pick.index ? ' (first choice unavailable)' : ''}. Roles: ${roles.map(mainAgentName).join(', ')}.`,
-      ...(gaps.length ? [`Not on their first choice here: ${gaps.join(', ')}.`] : [])].join('\n');
+    return [`Main mode ${name}: ${pick.key}:${pick.level}${pick.index ? ' (first choice unavailable)' : ''}. Delegate with pi-team.<role>.`,
+      ...(gaps.length ? [`Not on their first choice here: ${gaps.join(', ')}.`] : []), table(presets, ctx)].join('\n');
+  }
+  // Where each role routes now; the orchestrator line shows the main model itself.
+  function table(presets: Presets, ctx: ExtensionContext) {
+    if (!preset || !presets[preset]) return '';
+    return routeTable(presets[preset], ctx.modelRegistry, readOverrides({ main: key }),
+      { role: 'orchestrator', model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined, level: pi.getThinkingLevel() });
   }
   function off() {
     unregister();
+    try { remove(scopePath({ main: key })); } catch { /* nothing to drop */ }
     if (preset) pi.appendEntry(entryType, { preset: null });
     preset = undefined;
   }
@@ -95,6 +117,9 @@ export function mainMode(pi: ExtensionAPI, load: () => Presets, cwd: string) {
   const teamOnly = (agent: string, presets: Presets) => Object.entries(presets).some(([p, rs]) => Object.keys(rs).some(r => agent === `pi-team.${p}-${r}`));
 
   pi.on('session_start', async (event, ctx) => {
+    key = ctx.sessionManager.getSessionId();
+    process.env.PI_TEAM_MAIN_KEY = key;
+    pruneOverrides();
     let saved: string | null | undefined;
     for (const entry of ctx.sessionManager.getBranch() as { type: string; customType?: string; data?: { preset?: string | null } }[]) {
       if (entry.type === 'custom' && entry.customType === entryType) saved = entry.data?.preset ?? null;
@@ -130,13 +155,20 @@ export function mainMode(pi: ExtensionAPI, load: () => Presets, cwd: string) {
   });
 
   return {
+    target(cwd: string): RouteTarget | undefined {
+      if (!preset) return undefined;
+      const presets = load();
+      return { scope: { main: key }, roles: presets[preset], cwd, label: `main mode ${preset}`, self: 'main' };
+    },
+    current(ctx: ExtensionContext) { return { model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined, level: pi.getThinkingLevel() }; },
     async command(args: string, ctx: ExtensionContext) {
       const words = args.split(/\s+/).filter(Boolean);
       const asDefault = words.includes('--default');
       const [name] = words.filter(w => w !== '--default');
       if (!name) {
         const host = readJson<{ preset?: string }>(defaultPath)?.preset;
-        return `Main mode: ${preset ?? 'off'}${preset ? ` (${ctx.model?.provider}/${ctx.model?.id}; roles ${roles.map(mainAgentName).join(', ')})` : ''}. Host default: ${host ?? 'none'}.\nUsage: /team main <preset> [--default] | off [--default]`;
+        return [`Main mode: ${preset ?? 'off'}. Host default: ${host ?? 'none'}.`, ...(preset ? [table(load(), ctx)] : []),
+          'Usage: /team main <preset> [--default] | off [--default]; adjust with /team effort and /team model'].join('\n');
       }
       if (name === 'off') {
         off();

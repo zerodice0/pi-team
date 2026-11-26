@@ -12,8 +12,10 @@ import { registerMailbox, send, sendParams } from './mailbox.ts';
 import { teamPanel } from './panel.ts';
 import { herdrStatus } from './herdr-status.ts';
 import { participant, type ParticipantRuntime } from './participant.ts';
-import { authGaps, childEntry, generateAgents, imageDisabled, presetCatalog, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
+import { authGaps, candidates, childEntry, generateAgents, imageDisabled, presetCatalog, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
 import { mainMode } from './main.ts';
+import { routeCommand, teamTarget } from './routing.ts';
+import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import { skillCatalog, skillSize } from './skills.ts';
 import { backfillStats, loadStats, retroAsk, retroReport, roleSkills, statsReport, trackRun, writeRetro } from './stats.ts';
 import { errorCode, getTeam, git, isLive, members, teamDir, teams, text, writeJson, type FleetEntry, type Team } from './registry.ts';
@@ -189,6 +191,7 @@ export default async function piTeam(pi: ExtensionAPI) {
     generateAgents(presets);
   }
   let state: ParticipantRuntime | undefined;
+  let leadLevelRef: (() => ThinkingLevel | undefined) | undefined;
   if (team) {
     if (realpathSync(process.cwd()) !== realpathSync(team.worktree)) throw new Error(`Launch the lead from its worktree: ${team.worktree}`);
     const required = await requiredExtensions();
@@ -201,7 +204,23 @@ export default async function piTeam(pi: ExtensionAPI) {
     state = participant(pi, team, () => 'orchestrator', true);
     const lead = state;
     trackRun(pi, team, lead.row);
-    registerModels(pi, presets, lead.routed);
+    // The lead starts at its first candidate's effort; if the user then picks another thinking level,
+    // the router follows it (see registerModels), so the orchestrator's effort can change for a while.
+    let leadLevel: ThinkingLevel | undefined;
+    // A resumed session also starts with reason "startup", so the first pick is kept as a session entry
+    // and the user's later choice is not overwritten.
+    pi.on('session_start', (_event, ctx) => {
+      const saved = (ctx.sessionManager.getBranch() as { type: string; customType?: string; data?: { level?: ThinkingLevel } }[])
+        .findLast(e => e.type === 'custom' && e.customType === 'pi-team-lead-level')?.data?.level;
+      if (saved) { leadLevel = saved; return; }
+      const ready = candidates(orchestrator.models, ctx.modelRegistry);
+      leadLevel = (ready.find(c => c.until <= Date.now()) ?? ready[0])?.level;
+      if (!leadLevel) return;
+      pi.setThinkingLevel(leadLevel);
+      pi.appendEntry('pi-team-lead-level', { level: leadLevel });
+    });
+    leadLevelRef = () => leadLevel;
+    registerModels(pi, presets, lead.routed, { leadLevel: () => leadLevel });
     registerMailbox(pi, lead.owner, lead.update);
     snapshots(pi, team);
     herdrStatus(pi, team);
@@ -283,6 +302,16 @@ export default async function piTeam(pi: ExtensionAPI) {
         return show(ctx, presetView(catalog.presets, ctx, args.split(/\s+/)[1], catalog));
       }
       if (main && verb === 'main') return show(ctx, await main.command(args, ctx));
+      if (verb === 'effort' || verb === 'model' || verb === 'routes') {
+        const target = (id?: string) => {
+          if (team && (!id || id === team.id)) return teamTarget(team.id, true);
+          if (id) return teamTarget(id);
+          const t = main?.target(configCwd);
+          if (!t) throw new Error('Name a team with --team <id>, or turn on main mode with /team main <preset>.');
+          return { ...t, current: main!.current(ctx) };
+        };
+        return show(ctx, await routeCommand(pi, ctx, verb, args, target, leadLevelRef));
+      }
       if (verb === 'title') {
         // A lead retitles its own team; the main session names the team first.
         const m = team ? /^([\s\S]+)$/.exec(args.trim()) : /^(\S+)\s+([\s\S]+)$/.exec(args.trim());
@@ -321,7 +350,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         pi.sendMessage({ customType: 'pi-team-summary', content: summary, display: true, details: { team: args } }, { deliverAs: 'nextTurn' });
         return show(ctx, `Queued ${args} summary for the next user turn (no model request).`);
       }
-      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | send <address> <body>${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
+      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | send <address> <body> | routes | effort <role|all> <level|reset> | model <role|all> <model|reset> [--team <id>]${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
     } catch (e) { if (ctx.hasUI) ctx.ui.notify(e instanceof Error ? e.message : String(e), 'error'); else throw e; }
   } });
 }

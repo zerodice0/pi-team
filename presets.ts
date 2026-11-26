@@ -5,9 +5,10 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { blenderTools, toolName } from './blender-mcp/extension.ts';
 import { reaTools } from './rea-mcp/extension.ts';
+import { ambientScope, effectiveModels, readOverrides } from './overrides.ts';
 import { exists, locked, log, mkdir, namePattern, names, readJson, readText, remove, root, teamDir, writeAtomic, writeJson } from './registry.ts';
 
-interface Role { models: string[]; description?: string; skills?: string[]; mcp?: string[]; tools?: string[]; extensions?: string[]; readOnly?: boolean; max?: number; prompt?: string }
+export interface Role { models: string[]; description?: string; skills?: string[]; mcp?: string[]; tools?: string[]; extensions?: string[]; readOnly?: boolean; max?: number; prompt?: string }
 // MCP servers a role can ask for by name. Each one is an extension that only that role's members load,
 // so the main session and the lead never start it; the extension registers the server's tools.
 const mcpServers: Record<string, { extension: string; tools: string[]; prompt: string }> = {
@@ -25,7 +26,7 @@ const mcpServers: Record<string, { extension: string; tools: string[]; prompt: s
 export type Presets = Record<string, Record<string, Role>>;
 const here = dirname(fileURLToPath(import.meta.url));
 const defaultsPath = join(here, 'presets.default.json');
-const levels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export const levels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 const candidatePattern = /^([\w.-]+)\/([\w./-]+):((?:off|minimal|low|medium|high|xhigh|max))$/;
 function candidate(s: string) {
   const match = candidatePattern.exec(s);
@@ -66,7 +67,7 @@ function validate(value: Presets | undefined, relativeTo: string): Presets {
 type RawRole = Omit<Role, 'models'> & { models?: string | string[] };
 interface PresetDef { extends?: string; abstract?: boolean; description?: string; slots?: Record<string, string[]>; roles?: Record<string, RawRole | null>; replace?: boolean }
 interface Layer { models: Record<string, string>; presets: Record<string, PresetDef> }
-export interface Catalog { presets: Presets; descriptions: Record<string, string>; problems: Record<string, string> }
+export interface Catalog { presets: Presets; descriptions: Record<string, string>; problems: Record<string, string>; models: Record<string, string> }
 const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const aliasPattern = /^[a-z][\w.-]*$/;
 const physicalPattern = /^[\w.-]+\/[\w./-]+$/;
@@ -154,7 +155,7 @@ function resolvePreset(name: string, defs: Record<string, PresetDef>, models: Re
 }
 export function presetCatalog(cwd: string): Catalog {
   const { models, presets: defs } = merge([readLayer(defaultsPath, here), readLayer(join(root, 'presets.json'), root), readLayer(join(cwd, '.pi', 'teams', 'presets.json'), cwd)]);
-  const catalog: Catalog = { presets: {}, descriptions: {}, problems: {} };
+  const catalog: Catalog = { presets: {}, descriptions: {}, problems: {}, models };
   // One broken preset must not take the others down: teams started from them keep working.
   for (const [name, def] of Object.entries(defs)) {
     if (def.abstract) continue;
@@ -269,7 +270,9 @@ export function candidates(models: string[], registry: ExtensionContext["modelRe
     return model && registry.hasConfiguredAuth(model) ? [{ key: c.key, level: c.level, index, model, until: cd[c.key]?.until ?? 0 }] : [];
   });
 }
-export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (model: string, fallback: boolean) => void, options: { skipOrchestrator?: boolean } = {}) {
+// leadLevel: in a lead, the thinking level pi selected at start. When the user picks another one
+// (shift+tab, /thinking), the orchestrator follows it instead of the candidate's level.
+export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (model: string, fallback: boolean, level: ThinkingLevel) => void, options: { skipOrchestrator?: boolean; leadLevel?: () => ThinkingLevel | undefined } = {}) {
   for (const [preset, roles] of Object.entries(presets)) for (const [role, item] of Object.entries(roles)) {
     if (role === 'image' && imageDisabled()) continue;
     // The main session never runs a lead; listing team/<preset>.orchestrator there only invites
@@ -281,7 +284,9 @@ export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (mo
       if (disabled) throw new Error(`Image role disabled: ${disabled}`);
       const now = Date.now();
       const failed = request.reason === 'retry' && request.failed?.model;
-      const available = candidates(item.models, ctx.modelRegistry).filter(c => !(failed && failed.id === c.model.id && failed.provider === c.model.provider));
+      // Temporary overrides (/team effort, /team model) apply from the next request.
+      const override = readOverrides(ambientScope())[role];
+      const available = candidates(effectiveModels(item, override), ctx.modelRegistry).filter(c => !(failed && failed.id === c.model.id && failed.provider === c.model.provider));
       // Within a turn (tool follow-ups, compaction) stay on the model that answered last: switching
       // there drops the prompt cache. A new user turn or a retry chooses again.
       const previous = (request.reason === 'continuation' || request.reason === 'direct') ? request.previous?.model : undefined;
@@ -292,8 +297,10 @@ export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (mo
         const warning = `team/${id}: all authenticated candidates are cooling down; trying ${choice.key}.`;
         if (ctx.hasUI) ctx.ui.notify(warning, 'warning'); else process.stderr.write(`${warning}\n`);
       }
-      if (request.reason !== 'direct') onRoute?.(choice.key, choice.index !== 0);
-      return { model: choice.model, thinkingLevel: choice.level };
+      const base = role === 'orchestrator' ? options.leadLevel?.() : undefined;
+      const level = base && request.thinkingLevel && request.thinkingLevel !== base ? request.thinkingLevel : override?.level ?? choice.level;
+      if (request.reason !== 'direct') onRoute?.(choice.key, choice.index !== 0, level);
+      return { model: choice.model, thinkingLevel: level };
     } });
   }
 }

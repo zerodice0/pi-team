@@ -25,14 +25,14 @@ const LIVE_ROWS = 5;
 const REFRESH_MS = 2000;
 const positionFile = join(root, 'panel.json');
 const KEY = 10;
-const MODEL = 11;
-function memberLine(p: { key: string; model?: string; fallback?: boolean; tool?: string; path?: string; error?: string }, state: string): Line {
+const MODEL = 17;
+function memberLine(p: { key: string; model?: string; level?: string; fallback?: boolean; tool?: string; path?: string; error?: string }, state: string): Line {
   const [mark, tone] = glyph[state] ?? ['?', 'label'];
   const busy = state === 'working' || state === 'waiting';
   return {
     left: [['    '], [mark, tone], [' '], [clip(p.key, KEY).padEnd(KEY), 'name'], [' '], [activity(p, state), busy ? 'name' : 'label']],
     // A fallback model is shown in amber rather than with an extra glyph.
-    right: [[clip(modelName(p.model), MODEL), p.fallback ? 'warn' : 'label']],
+    right: [[clip(modelName(p.model, p.level), MODEL), p.fallback ? 'warn' : 'label']],
   };
 }
 export function teamLines(d: Info, inner: number): Line[] {

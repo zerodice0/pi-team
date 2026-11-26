@@ -61,7 +61,7 @@ export function wrap(text: string, width: number, lines = Infinity) {
 export const pad = (text: string, width: number) => { const c = clip(text, width); return c + ' '.repeat(Math.max(0, width - visibleWidth(c))); };
 
 export const short = (address?: string) => address?.split('@')[0] ?? '?';
-export const modelName = (model?: string) => model?.split('/').pop()?.replace(/^claude-/, '') ?? '—';
+export const modelName = (model?: string, level?: string) => `${model?.split('/').pop()?.replace(/^claude-/, '') ?? '—'}${model && level ? `·${level}` : ''}`;
 const tools: Record<string, string> = { team_wait: 'waiting for mail', team_send: 'sending mail', team_inbox: 'reading mail', team_peers: 'checking team', subagent: 'delegating', team_report: 'reporting' };
 const idleWords: Record<string, string> = { working: 'thinking', waiting: 'waiting for mail', idle: 'idle', done: 'done', failed: 'failed', stopped: 'stopped', starting: 'starting', stale: 'offline' };
 export function activity(p: { tool?: string; path?: string; error?: string }, state: string) {

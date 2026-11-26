@@ -67,8 +67,8 @@ function roster(d: Info, inner: number): Line[] {
   };
   type Row = { role: string; key: string; model: string; fallback?: boolean; state: string; now: string; mail: string; tokens: string };
   const people: Row[] = [
-    ...(d.lead ? [{ role: 'lead', key: 'lead', model: modelName(d.lead.model), fallback: d.lead.fallback, state: d.state, now: activity(d.lead, d.state), mail: mail('lead'), tokens: d.lead.tokens.toLocaleString('en-US') }] : []),
-    ...d.rows.map(p => ({ role: p.role, key: p.key, model: modelName(p.model), fallback: p.fallback, state: p.state, now: activity(p, p.state), mail: mail(p.key), tokens: p.tokens.toLocaleString('en-US') })),
+    ...(d.lead ? [{ role: 'lead', key: 'lead', model: modelName(d.lead.model, d.lead.level), fallback: d.lead.fallback, state: d.state, now: activity(d.lead, d.state), mail: mail('lead'), tokens: d.lead.tokens.toLocaleString('en-US') }] : []),
+    ...d.rows.map(p => ({ role: p.role, key: p.key, model: modelName(p.model, p.level), fallback: p.fallback, state: p.state, now: activity(p, p.state), mail: mail(p.key), tokens: p.tokens.toLocaleString('en-US') })),
     ...d.pending.map(p => ({ role: p.role, key: p.key, model: modelName(p.model), state: 'starting', now: 'starting', mail: '0/0', tokens: (p.tokens?.total ?? 0).toLocaleString('en-US') })),
   ];
   // "Now" repeats the state word when a member is not in a tool; show a dash instead.
