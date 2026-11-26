@@ -13,6 +13,8 @@ export interface RunStat {
   v: 1; team: string; preset: string; repo: string; role: string; key: string; sessionId: string;
   task?: string; startedAt: number; endedAt: number; state: string; resumed: boolean; models: string[];
   turns: number; tokens: { input: number; cacheRead: number; cacheWrite: number; output: number }; cost: number; maxContext: number;
+  // Tool calls by name, without skill reads. Older records lack it.
+  tools?: Record<string, number>;
   skills: { listed: string[]; listedChars: number; extra?: string[]; read: SkillRead[] };
   // Members only: headings the lead's brief left out, and headings missing from the member's final report.
   brief?: { chars: number; missing: string[] };
@@ -41,6 +43,20 @@ export function listedSkills(prompt: string) {
   return { chars: block.length, skills: entries.map(m => ({ name: m[1].trim(), dir: dirname(m[2].trim()) })) };
 }
 const skillPath = /([^\s"'`]*\/skills\/([^/\s"'`]+)\/SKILL\.md)/;
+// Work a lead should hand to members: built-in tools that read, search, run or edit. Team, subagent,
+// mailbox and lesson tools are coordination; reading a SKILL.md is how a skill is used.
+const workTools = new Set(['bash', 'read', 'edit', 'write', 'grep', 'find', 'ls']);
+const skillRead = (tool: string, args: unknown) => {
+  const a = args as { path?: unknown; command?: unknown } | undefined;
+  return (tool === 'read' || tool === 'bash') && /SKILL\.md/.test(String(tool === 'read' ? a?.path ?? '' : a?.command ?? ''));
+};
+export const directWork = (tool: string, args: unknown) => workTools.has(tool) && !skillRead(tool, args);
+export const directCount = (r: { tools?: Record<string, number> }) => Object.entries(r.tools ?? {}).reduce((n, [t, c]) => n + (workTools.has(t) ? c : 0), 0);
+const directList = (r: { tools?: Record<string, number> }) => Object.entries(r.tools ?? {}).filter(([t]) => workTools.has(t)).sort((a, b) => b[1] - a[1]).map(([t, c]) => `${t} ${c}`).join(', ');
+const countTool = (stat: RunStat, tool: string, args: unknown) => {
+  if (skillRead(tool, args)) return;
+  stat.tools = { ...stat.tools, [tool]: (stat.tools?.[tool] ?? 0) + 1 };
+};
 const textOf = (result: unknown) => {
   const content = (result as { content?: { type: string; text?: string }[] } | undefined)?.content;
   return Array.isArray(content) ? content.reduce((n, c) => n + (c.type === 'text' ? c.text?.length ?? 0 : 0), 0) : 0;
@@ -94,6 +110,7 @@ export function trackRun(pi: ExtensionAPI, team: Team, row: () => Participant | 
     if (m.provider !== 'team' && !stat.models.includes(`${m.provider}/${m.model}`)) stat.models.push(`${m.provider}/${m.model}`);
   });
   pi.on('tool_execution_start', e => {
+    if (stat) countTool(stat, e.toolName, e.args);
     if (!stat || (e.toolName !== 'read' && e.toolName !== 'bash')) return;
     const text = e.toolName === 'read' ? String(e.args?.path ?? '') : String(e.args?.command ?? '');
     const byDir = listed.find(s => text.includes(`${s.dir}/SKILL.md`));
@@ -145,7 +162,7 @@ export function statsReport(stats: RunStat[], only?: string) {
   for (const role of roles) {
     const { runs, uses } = roleSkills(stats, role);
     const states = runs.reduce<Record<string, number>>((m, r) => (m[r.state] = (m[r.state] ?? 0) + 1, m), {});
-    lines.push('', `${role}: ${runs.length} runs (${Object.entries(states).map(([s, n]) => `${n} ${s}`).join(', ')}) · avg ${Math.round(avg(runs.map(r => r.turns)))} turns · max context ${k(avg(runs.map(r => r.maxContext)))} · cache read ${k(avg(runs.map(r => r.tokens.cacheRead)))} · $${avg(runs.map(r => r.cost)).toFixed(2)}/run · skill list ${k(avg(runs.map(r => r.skills.listedChars)))} chars`);
+    lines.push('', `${role}: ${runs.length} runs (${Object.entries(states).map(([s, n]) => `${n} ${s}`).join(', ')}) · avg ${Math.round(avg(runs.map(r => r.turns)))} turns · max context ${k(avg(runs.map(r => r.maxContext)))} · cache read ${k(avg(runs.map(r => r.tokens.cacheRead)))} · $${avg(runs.map(r => r.cost)).toFixed(2)}/run · skill list ${k(avg(runs.map(r => r.skills.listedChars)))} chars${role === 'orchestrator' && runs.some(r => r.tools) ? ` · direct work ${Math.round(avg(runs.filter(r => r.tools).map(directCount)))}/run` : ''}`);
     const listed = uses.filter(u => u.listed).sort((a, b) => b.read / b.listed - a.read / a.listed || a.name.localeCompare(b.name));
     const read = listed.filter(u => u.read);
     const unread = listed.filter(u => !u.read).map(u => u.name);
@@ -202,6 +219,7 @@ function fromSession(team: Team, p: Participant): RunStat | undefined {
       const model = `${m.provider}/${m.model}`;
       if (m.provider !== 'team' && !stat.models.includes(model)) stat.models.push(model);
       for (const c of m.content ?? []) {
+        if (c.type === 'toolCall') countTool(stat, c.name, c.arguments);
         if (c.type !== 'toolCall' || (c.name !== 'read' && c.name !== 'bash')) continue;
         const text = c.name === 'read' ? String(c.arguments?.path ?? '') : String(c.arguments?.command ?? '');
         const name = listed.find(s => text.includes(`${s.dir}/SKILL.md`))?.name ?? skillPath.exec(text)?.[2];
@@ -262,6 +280,7 @@ export function retroReport(teamId: string, all = loadStats()) {
       r.brief ? !inForm(r.brief) ? 'brief not in the standard form' : r.brief.missing.length ? `brief missing ${r.brief.missing.join(', ')}` : '' : '',
       r.report ? silentReport(r.report) ? 'no report' : !formalReport(r.report) ? 'report not in the standard form' : '' : '',
       r.skills.extra?.length ? `looked up unlisted ${r.skills.extra.join(', ')}` : '',
+      r.role === 'orchestrator' && directCount(r) ? `direct work ${directCount(r)} (${directList(r)})` : '',
     ].filter(Boolean);
     lines.push(`- ${r.key} (${r.role}, ${r.state}${r.resumed ? ', resumed' : ''}): ${r.turns} turns, max context ${k(r.maxContext)}, $${r.cost.toFixed(2)}; skills read ${read.join(', ') || 'none'}${unread ? `, ${unread} listed never read` : ''}${flags.length ? `; ${flags.join('; ')}` : ''}`);
   }
@@ -278,6 +297,10 @@ export function retroReport(teamId: string, all = loadStats()) {
     const listed = [...new Set(mine.flatMap(r => r.skills.listed))];
     const never = listed.filter(n => !mine.some(r => r.skills.read.some(x => x.name === n)));
     if (never.length >= 5) notes.push(`${role} carried ${never.length} skills it never read (${never.slice(0, 5).join(', ')}, …): see /team stats ${role} before trimming the role.`);
+  }
+  // A lead's own reads, searches and commands each re-read its whole context; members should do them.
+  for (const r of runs.filter(r => r.role === 'orchestrator' && directCount(r) >= 20)) {
+    notes.push(`The lead (${r.key}) ran ${directCount(r)} direct work calls (${directList(r)}) over ${r.turns} turns with up to ${k(r.maxContext)} context: brief a member for reading, builds and checks, or resume one, instead of doing them yourself.`);
   }
   const silent = runs.filter(r => silentReport(r.report));
   if (silent.length) notes.push(`Ended without a report: ${silent.map(r => `${r.key} (${r.state}${inForm(r.brief) && r.brief!.missing.includes('Limits') ? ', brief had no Limits' : ''})`).join(', ')}.`);

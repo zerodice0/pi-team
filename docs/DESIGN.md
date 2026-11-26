@@ -151,7 +151,10 @@ flowchart TB
 4. `team.json`을 기록합니다.
 5. 팀장을 실행합니다.
    - Herdr: `herdr pane run <pane> env PI_TEAM_ID=<team> PI_TEAM_ROLE=lead PI_CACHE_RETENTION=long pi --model team/<preset>.orchestrator --append-system-prompt <teamdir>/lead-prompt.md --no-skills --skill <dir>... "<목표>"`
-   - 사용량 관리: 1시간 캐시(가상 모델은 pi의 유휴 캐시 데우기 대상이 아님), 팀장 스킬 제한(`leadSkills` 또는 orchestrator `skills`), 문맥 절약 지시와 구성원 재개, 쉴 때 20만 토큰을 넘으면 자동 압축(`PI_TEAM_LEAD_COMPACT_TOKENS`). 근거는 craft-light 팀 분석(팀장 비용 69%, 캐시 재작성이 팀 비용의 45%)이다.
+   - 사용량 관리: 1시간 캐시(가상 모델은 pi의 유휴 캐시 데우기 대상이 아님), 팀장 스킬 제한(`leadSkills` 또는 orchestrator `skills`), 문맥 절약 지시와 구성원 재개, 20만 토큰을 넘으면 자동 압축(`PI_TEAM_LEAD_COMPACT_TOKENS`), 직접 작업 경고(`PI_TEAM_LEAD_DIRECT_WARN`). 근거는 craft-light 팀 분석(팀장 비용 69%, 캐시 재작성이 팀 비용의 45%)과 2026-11-26 macbook advanced 팀 분석(팀장의 직접 bash가 팀장 비용의 78%, 압축이 45만 토큰에서야 일어남)이다.
+   - **팀장 프롬프트(`lifecycle.ts` `leadPrompt`, `refreshLeadPrompt`):** 팀을 만들 때 쓰고, 팀장 확장이 로드될 때마다 지금 코드로 다시 씁니다. pi의 resource loader는 확장을 불러온 뒤 `--append-system-prompt` 파일을 읽으므로(`resource-loader.js` `reload()`), 다시 쓴 내용이 그 실행에 바로 적용됩니다. `before_agent_start` 주입은 예전 파일 내용과 겹치므로 쓰지 않습니다.
+   - **팀장 압축(`compact.ts`):** `ctx.compact()`는 먼저 실행 중인 run을 abort하고, pi 자체 임계 압축은 라우팅된 실제 모델의 `contextWindow - reserveTokens`로 판단합니다. 가상 모델 라우터가 돌려준 모델은 레지스트리의 실제 모델로 바뀌므로(`model-runtime.js` `resolveModel`) 창 크기를 줄여 보고하는 방법은 통하지 않고, 설정 파일의 모델별 override는 확장에서 주입할 수 없습니다. 그래서 도구 결과가 있어 다음 요청이 이어지는 `turn_end`에서 임계값을 넘으면, pi의 `prepareCompaction`(공개되지 않아 `getPackageDir()`의 dist에서 불러옴)과 공개 `compact()`로 요약을 만들고 `compaction` 항목 초안을 돌려줍니다. 요약 요청은 `ctx.modelRegistry.streamSimple`로 보냅니다. run이 끝난 뒤(`agent_settled`)에는 예전처럼 `ctx.compact()`를 씁니다.
+   - **직접 작업 경고(`index.ts` `watchDirectWork`, `stats.ts` `directWork`):** 팀장의 작업 도구 호출을 10분 창으로 세고, 6번이 되면 steer 메시지를 보냅니다(30분에 한 번). 실행 기록의 `tools`에 도구별 호출 수를 남기고, 회고 Signals는 팀장의 직접 작업이 20번 이상이면 알립니다.
    - 밖: 같은 명령을 화면에 안내합니다.
 6. **정리:** `/team close <team>`은 다음 조건이 모두 충족될 때 진행합니다.
    - 팀장 프로세스가 종료되었거나 사용자가 확인함
@@ -176,8 +179,8 @@ flowchart TB
   - idle 팀장은 `triggerTurn:true`로 바로 턴을 시작합니다(E2). idle 팀원은 다음 턴에 받습니다.
 - **도구:** `team_peers`, `team_send`, `team_inbox`, `team_wait(≤120s)`. `team_peers`는 상태와 주소만 반환합니다(끝난 구성원의 결과 전문은 넣지 않음).
 - **착수 점검과 지시문 양식(`lifecycle.ts` `intake`, `briefForm`):** 팀장은 첫 위임 전에 목표를 점검하고 막는 모르는 점만 3개 이하의 선택지 질문으로 묻습니다. 구성원 지시문은 Goal/Background/Read first/Do/Do not/Done when/Limits/Report 제목을 따르고, 구성원은 Result/Checks/Open issues/Changed files/Artifacts로 보고합니다(`presets.ts` `roleAgent`).
-- **팀 회고(`stats.ts` `retroReport`):** `team_report` done과 팀 닫기 때 실행 기록으로 회고 초안을 만들어 `retro.md`에 둡니다. 지시문·보고 양식 준수, 보고 누락, 같은 역할 재생성, 비용 편차, 읽히지 않은 스킬, 역할 밖 스킬 읽기를 신호로 보고, 팀장은 지속할 패턴만 교훈으로 남기고 부족한 스킬은 `npx skills find` 후보로 요약에 적습니다.
-- **실행 기록(`stats.ts`):** 참가자마다 `teams/stats/`에 역할·턴·토큰·비용·최대 문맥·목록 스킬·읽은 스킬을 남깁니다. `/team stats`는 이를 adopted, retire candidates, assign candidates로 분류하고, `/team stats import`는 과거 세션 파일에서 기록을 만듭니다. 팀장은 `team_skills`로 설치된 스킬을 검색해 구성원 한 명에게 `skill` 옵션으로 더해 줍니다.
+- **팀 회고(`stats.ts` `retroReport`):** `team_report` done과 팀 닫기 때 실행 기록으로 회고 초안을 만들어 `retro.md`에 둡니다. 지시문·보고 양식 준수, 보고 누락, 같은 역할 재생성, 비용 편차, 읽히지 않은 스킬, 역할 밖 스킬 읽기, 팀장의 직접 작업 횟수를 신호로 보고, 팀장은 지속할 패턴만 교훈으로 남기고 부족한 스킬은 `npx skills find` 후보로 요약에 적습니다.
+- **실행 기록(`stats.ts`):** 참가자마다 `teams/stats/`에 역할·턴·토큰·비용·최대 문맥·도구별 호출 수·목록 스킬·읽은 스킬을 남깁니다. `/team stats`는 이를 adopted, retire candidates, assign candidates로 분류하고, `/team stats import`는 과거 세션 파일에서 기록을 만듭니다. 팀장은 `team_skills`로 설치된 스킬을 검색해 구성원 한 명에게 `skill` 옵션으로 더해 줍니다.
 - **제한:**
   - hop 5회
   - 송신자당 분당 20건

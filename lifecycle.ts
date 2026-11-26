@@ -116,6 +116,31 @@ export const briefForm = [
   'Add what the role needs: questions and evidence as path:line for investigation; findings P0-P2 with proof and a verdict for review; output paths for artifacts and captures.',
 ].join('\n');
 
+// The lead prompt is built from the current code's guidance, not frozen at team creation: a lead
+// writes it again on every start (see index.ts), so restarting an older team picks up new guidance.
+export function leadPrompt(team: Team, presets: Presets) {
+  return [
+    `You lead pi-team ${team.id} ("${teamTitle(team)}") in ${team.worktree}. Talk directly to the user. If the work changes course, the user can retitle the team with /team title.`,
+    `Delegate with the subagent tool only to these member agents, using the exact names. Pick the member whose description fits the work:\n${roleList(presets, team.preset).map(r => `- ${r}`).join('\n')}\nNever pass model, cwd, worktree, an external runner, or a script workflow. Use async children when members must exchange mail.`,
+    'If a member fails with a recorded fallback and sideEffects=false, run that role again so routing skips the cooled model. If sideEffects=true, do not rerun it; report the failure and side effects to the user.',
+    'Use team_peers to inspect members and team_send to collaborate. Use team_report to finalize the team summary. Do not merge or remove the worktree without the user.',
+    intake,
+    briefForm,
+    leanLead,
+    presets[team.preset]?.orchestrator?.prompt ?? '',
+  ].join('\n\n');
+}
+export const leadPromptPath = (id: string) => join(teamDir(id), 'lead-prompt.md');
+// Returns true when the file changed. pi reads --append-system-prompt files after loading
+// extensions, so a rewrite from the lead's extension factory applies to that same launch.
+export function refreshLeadPrompt(team: Team, presets: Presets) {
+  const path = leadPromptPath(team.id);
+  const next = leadPrompt(team, presets);
+  if (readText(path) === next) return false;
+  writeAtomic(path, next);
+  return true;
+}
+
 export function start(cwd: string, p: Start, alias?: { key: string; names: string[]; description?: string; icon?: string }) {
   if (!p.goal.trim() || p.goal.includes('\0')) throw new Error('A goal is required.');
   if (p.icon !== undefined) checkIcon(p.icon, 'Team start');
@@ -190,17 +215,8 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
     writeAtomic(join(dir, 'ledger.jsonl'), '');
     mkdir(join(dir, 'inbox', 'lead'));
     mkdir(join(dir, 'members'));
-    const promptPath = join(dir, 'lead-prompt.md');
-    writeAtomic(promptPath, [
-      `You lead pi-team ${id} ("${teamTitle(team)}") in ${team.worktree}. Talk directly to the user. If the work changes course, the user can retitle the team with /team title.`,
-      `Delegate with the subagent tool only to these member agents, using the exact names. Pick the member whose description fits the work:\n${roleList(captured, p.preset).map(r => `- ${r}`).join('\n')}\nNever pass model, cwd, worktree, an external runner, or a script workflow. Use async children when members must exchange mail.`,
-      'If a member fails with a recorded fallback and sideEffects=false, run that role again so routing skips the cooled model. If sideEffects=true, do not rerun it; report the failure and side effects to the user.',
-      'Use team_peers to inspect members and team_send to collaborate. Use team_report to finalize the team summary. Do not merge or remove the worktree without the user.',
-      intake,
-      briefForm,
-      leanLead,
-      captured[p.preset].orchestrator.prompt ?? '',
-    ].join('\n\n'));
+    const promptPath = leadPromptPath(id);
+    writeAtomic(promptPath, leadPrompt(team, captured));
     writeJson(join(dir, 'team.json'), team);
     const extra = captured[p.preset].orchestrator.extensions?.flatMap(path => ['--extension', path]) ?? [];
     const skillArgs = leadSkillArgs(captured[p.preset].orchestrator.skills, team.worktree);

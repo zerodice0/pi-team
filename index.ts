@@ -7,18 +7,19 @@ import { pathToFileURL } from 'node:url';
 import { realpathSync } from 'node:fs';
 import { aliasHints, delegate, readTargets, resolveTarget, showAliases, startNamed, type TeamTargets } from './aliases.ts';
 import { board, status, widget } from './board.ts';
-import { closeTeam, findSummary, parseStart, report, retitle, roleList, splitGoal, syncHerdrLabel } from './lifecycle.ts';
+import { closeTeam, findSummary, parseStart, refreshLeadPrompt, report, retitle, roleList, splitGoal, syncHerdrLabel } from './lifecycle.ts';
 import { registerMailbox, send, sendParams } from './mailbox.ts';
 import { teamPanel } from './panel.ts';
 import { herdrStatus } from './herdr-status.ts';
 import { participant, type ParticipantRuntime } from './participant.ts';
 import { authGaps, candidates, childEntry, generateAgents, imageDisabled, presetCatalog, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
 import { mainMode } from './main.ts';
+import { leadCompaction } from './compact.ts';
 import { routeCommand, teamTarget, type RouteTarget } from './routing.ts';
 import { routesView } from './routes-view.ts';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import { skillCatalog, skillSize } from './skills.ts';
-import { backfillStats, loadStats, retroAsk, retroReport, roleSkills, statsReport, trackRun, writeRetro } from './stats.ts';
+import { backfillStats, directWork, loadStats, retroAsk, retroReport, roleSkills, statsReport, trackRun, writeRetro } from './stats.ts';
 import { errorCode, getTeam, git, isLive, members, teamDir, teams, text, writeJson, type FleetEntry, type Team } from './registry.ts';
 
 interface Registration { dispose(): void }
@@ -52,6 +53,30 @@ function registerRoleAgents(pi: ExtensionAPI, team: Team, presets: Presets) {
   });
   pi.on('session_shutdown', dispose);
   return active;
+}
+// A lead that reads, builds or checks by itself pays for its whole context on every call: on
+// 2026-11-26 a lead with a 250k context ran bash 247 times, 78% of its cost. Steer it back to
+// delegating when it does that several times in a short while. The message is shown to the user too.
+function watchDirectWork(pi: ExtensionAPI) {
+  const limit = Number(process.env.PI_TEAM_LEAD_DIRECT_WARN ?? 6);
+  if (!(limit > 0)) return;
+  const window = 10 * 60_000;
+  const quiet = 30 * 60_000;
+  let calls: { at: number; tool: string }[] = [];
+  let warnedAt = 0;
+  pi.on('tool_execution_start', (e, ctx) => {
+    if (!directWork(e.toolName, e.args)) return;
+    const now = Date.now();
+    calls = [...calls.filter(c => now - c.at < window), { at: now, tool: e.toolName }];
+    if (calls.length < limit || now - warnedAt < quiet) return;
+    warnedAt = now;
+    const counts = calls.reduce<Record<string, number>>((m, c) => (m[c.tool] = (m[c.tool] ?? 0) + 1, m), {});
+    const tokens = ctx.getContextUsage()?.tokens;
+    pi.sendMessage({ customType: 'pi-team-lean', display: true, details: { counts },
+      content: `pi-team: you ran ${calls.length} tool calls yourself in the last 10 minutes (${Object.entries(counts).map(([t, n]) => `${t} ${n}`).join(', ')})${tokens ? ` with a ${Math.round(tokens / 1000)}k-token context that every call re-reads` : ''}. Hand reading, searching, builds, tests and checks to a member (scout, reviewer, qa-tester) or resume the member that did the last round, and work from its summary.` },
+    { deliverAs: 'steer' });
+    calls = [];
+  });
 }
 function teamStatus(select?: string) {
   if (!select) return teams().map(t => {
@@ -195,6 +220,12 @@ export default async function piTeam(pi: ExtensionAPI) {
   let leadLevelRef: (() => ThinkingLevel | undefined) | undefined;
   if (team) {
     if (realpathSync(process.cwd()) !== realpathSync(team.worktree)) throw new Error(`Launch the lead from its worktree: ${team.worktree}`);
+    // pi reads the --append-system-prompt file after extensions load, so a team made by older code
+    // gets the current lead guidance on this very launch.
+    let promptNote = '';
+    try { if (refreshLeadPrompt(team, presets)) promptNote = 'pi-team: updated this team\'s lead prompt to the current guidance.'; }
+    catch (e) { promptNote = `pi-team: could not update the lead prompt: ${e instanceof Error ? e.message : String(e)}`; }
+    if (promptNote) pi.on('session_start', (_e, ctx) => { if (ctx.hasUI) ctx.ui.notify(promptNote, promptNote.includes('could not') ? 'warning' : 'info'); });
     const required = await requiredExtensions();
     let registration: Registration | undefined;
     const orchestrator = presets[team.preset].orchestrator;
@@ -222,6 +253,8 @@ export default async function piTeam(pi: ExtensionAPI) {
     });
     leadLevelRef = () => leadLevel;
     registerModels(pi, presets, lead.routed, { leadLevel: () => leadLevel });
+    leadCompaction(pi, Number(process.env.PI_TEAM_LEAD_COMPACT_TOKENS ?? 200_000));
+    watchDirectWork(pi);
     registerMailbox(pi, lead.owner, lead.update);
     snapshots(pi, team);
     herdrStatus(pi, team);
@@ -235,26 +268,6 @@ export default async function piTeam(pi: ExtensionAPI) {
     if (orchestrator.readOnly) pi.on('tool_call', e => {
       if (e.toolName === 'write' || e.toolName === 'edit') return { block: true, reason: 'This orchestrator role is read-only.' };
     });
-    // Compact the lead while it waits rather than re-reading a huge context on every later turn.
-    // Context usage keeps the last response's size until a new response arrives, so judge again only
-    // after a turn has finished since the previous compaction.
-    const compactAt = Number(process.env.PI_TEAM_LEAD_COMPACT_TOKENS ?? 200_000);
-    let compacting = false;
-    let fresh = true;
-    if (compactAt > 0) {
-      pi.on('turn_end', () => { fresh = true; });
-      pi.on('agent_settled', (_e, ctx) => {
-        const tokens = ctx.getContextUsage()?.tokens;
-        if (compacting || !fresh || tokens == null || tokens < compactAt) return;
-        compacting = true;
-        fresh = false;
-        ctx.compact({
-          customInstructions: 'Keep the team goal and user instructions verbatim, every decision and user answer, each member key with its role, latest run id, state and latest result, open questions, commits, and file paths. Drop file contents, command output and image details already summarized.',
-          onComplete: () => { compacting = false; },
-          onError: e => { compacting = false; if (ctx.hasUI && !/nothing to compact/i.test(e.message)) ctx.ui.notify(`pi-team: lead compaction failed: ${e.message}`, 'warning'); },
-        });
-      });
-    }
     // Installed skills only: no network and no installs while a team runs.
     pi.registerTool({ name: 'team_skills', label: 'Team skills',
       description: 'Search installed skills to give a member extra ones. Shows each match with its size and how often members of a role read it. Pass role to see that role\'s default skills.',
