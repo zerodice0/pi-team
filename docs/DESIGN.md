@@ -55,15 +55,25 @@ flowchart TB
 
 | 모드 | 판별 기준 | 역할 |
 |---|---|---|
-| main | `PI_TEAM_ROLE` 없음 | `/team` 명령, `team_enable` loader, board overlay·widget, 팀 생성·정리 |
+| main | `PI_TEAM_ROLE` 없음 | `/team` 명령, `team_enable` loader, board overlay·widget, 팀 생성·정리, 메인 모드(`main.ts`) |
 | lead | `PI_TEAM_ROLE=lead`, `PI_TEAM_ID=<team>` | heartbeat, 팀원 snapshot, 팀장용 메시지 도구, 필수 child 확장 등록, `subagent` 호출 검사, 팀 보고 |
 | member | 필수 child 확장(`child.ts`) | virtual model 등록, 팀 메시지 도구, 자기 등록, 부작용 추적, 오류 분류와 cooldown 기록 |
 
-- virtual model(`team/<preset>.<role>`)은 **모든 모드에서** 등록합니다. preflight 단계와 자식 프로세스 모두 이 모델을 찾을 수 있어야 하기 때문입니다.
+- virtual model(`team/<preset>.<role>`)은 **모든 모드에서** 등록합니다. preflight 단계와 자식 프로세스 모두 이 모델을 찾을 수 있어야 하기 때문입니다. 단, main 모드는 `team/<preset>.orchestrator`를 등록하지 않습니다. 메인 모델 후보로 골라지면 사고 수준이 무시되고, 캐시 데우기가 꺼지며, 일반 서브에이전트가 그 모델을 찾지 못해 실패하기 때문입니다.
+- pi-subagents의 foreground 자식은 부모의 확장을 불러오지 않습니다. 그래서 메인 모드의 역할 agent는 `subagentOnlyExtensions`에 `models.ts`를 넣어 자식에도 virtual model을 등록합니다.
 
 ## 4. preset과 역할
 
-- `~/.pi/agent/teams/presets.json`: 없으면 아래 기본값으로 만듭니다. 프로젝트 `.pi/teams/presets.json`에 같은 이름의 preset이 있으면 통째로 대체합니다.
+- **층 구조:** `presets.default.json`(저장소) → `~/.pi/agent/teams/presets.json`(호스트) → `<repo>/.pi/teams/presets.json`(프로젝트) 순서로 겹칩니다. 파일이 없으면 그 층은 비어 있는 것으로 봅니다(더 이상 기본값을 파일로 쓰지 않습니다).
+- **v2 형식(`"version": 2`):** `models`는 모델 별칭(`"opus": "anthropic/claude-opus-5-5"`), `presets`는 `{ extends, abstract, description, slots, roles }`입니다.
+  - 역할의 `models`는 문자열 하나나 배열이고, 항목은 `@slot`, `별칭:수준`, `provider/id:수준` 가운데 하나입니다. 슬롯은 후보 목록으로 펼치고, 중복은 앞의 것만 남깁니다.
+  - 해석은 `extends` 사슬의 조상부터 차례로 슬롯을 덮어쓰고, 역할은 속성 단위로 합칩니다. 역할 값 `null`은 그 역할을 없앱니다. `abstract` preset(`base`)은 목록에 나오지 않습니다.
+  - 층 사이에서는 `models`를 별칭 단위로, 같은 이름의 preset을 슬롯·역할 단위로 합칩니다.
+- **예전 형식:** `version`이 없는 파일의 preset은 같은 이름의 아래 층 preset을 통째로 대체합니다.
+- **오류 격리:** preset마다 따로 해석·검증합니다. 실패한 preset은 목록에서 빠지고 이유가 `/team preset show`와 `Unknown preset` 오류에 나옵니다. 파일 자체를 읽지 못하면(JSON 오류, 잘못된 `models`) 전체가 실패합니다.
+- **팀 캐프처:** 팀을 만들 때 해석된(평면) preset 전체를 `teams/<id>/preset.json`에 저장합니다. 팀장과 구성원은 이 파일을 읽으므로, 실행 중 preset을 바꿔도 팀은 영향을 받지 않습니다.
+- **기본 preset:** `mix`, `advanced`, `claude`, `claude-advanced`, `codex`, `codex-advanced`. 역할과 슬롯의 연결은 다음과 같습니다. orchestrator는 `@lead`, task·frontend-dev·mobile-dev·game-dev·cloud-dev·qa-tester는 `@build`, scout는 `@scout`, vision은 `@vision`, tech-writer는 `@write`, image는 `@image`, 나머지 설계·검토 역할은 `@deep`입니다. `claude` 계열은 Codex OAuth가 필요한 image 역할을 뺍니다.
+- **로그인 확인:** 팀 시작과 메인 모드는 첫 후보에 로그인되어 있지 않은 역할을 알립니다(`authGaps`).
 
   | 역할 | `mix` 후보 체인 | 속성 |
   |---|---|---|
@@ -83,7 +93,8 @@ flowchart TB
   - `rea`(`rea-mcp/extension.ts`)는 REA 도구 260여 개를 하나씩 등록하지 않고 중계 도구 `rea_tools`(검색), `rea_tool_schema`, `rea_call`만 등록합니다. 10분(`PI_TEAM_REA_IDLE_MINUTES`) 동안 호출이 없으면 종료하고, 호출 제한 시간은 1시간입니다. Ghidra 경로(`GHIDRA_INSTALL_DIR`)와 JDK 25 이상(`JAVA_HOME`)을 자동으로 찾아 넘깁니다. Ghidra JVM은 별도 프로세스 그룹이지만, REA가 SIGTERM을 받거나 stdin이 닫히면 함께 종료합니다.
 - **역할 agent 생성:** 확장이 `~/.pi/agent/agents/pi-team/<preset>/<role>.md`를 생성합니다. frontmatter는 `package: pi-team`, `name: <preset>-<role>`, `model: team/<preset>.<role>`이고, readOnly 역할은 `excludeTools: write, edit`로 둡니다. orchestrator는 agent 파일을 만들지 않습니다.
 - **virtual model 라우팅:**
-  - `reason` 값이 `user` 또는 `continuation`이면, 인증이 있고 cooldown 중이 아닌 첫 후보를 고릅니다.
+  - `reason` 값이 `continuation`이나 `direct`(압축 등)이고 직전 응답 모델이 후보에 있으면 그 모델을 유지합니다. 같은 턴 안에서 모델을 바꾸면 prompt cache를 잃기 때문입니다.
+  - 그 밖의 `user`와 `continuation`은 인증이 있고 cooldown 중이 아닌 첫 후보를 고릅니다.
   - `retry`면 실패한 모델을 건너뜁니다.
   - 후보가 모두 막혔으면 cooldown이 가장 먼저 끝나는 후보를 고르고 경고를 남깁니다.
 - **실패 분류(member):** `agent_end`/`agent_settled`의 최종 `stopReason:"error"`와 `errorMessage`를 다음 네 분류로 나눕니다.
@@ -99,6 +110,22 @@ flowchart TB
 - **`subagent` 호출 강제(lead):** `tool_call` hook으로 `subagent` 호출을 검사해 두 경우를 막습니다.
   - `model` 인자가 있는 호출
   - `pi-team.<현재 preset>-*`가 아닌 agent를 지정한 호출
+
+### 메인 모드(`main.ts`)
+
+- `/team main <preset>`은 orchestrator 후보 가운데 로그인되어 있고 cooldown 중이 아닌 첫 모델을 `pi.setModel`로, 그 사고 수준을 `pi.setThinkingLevel`로 지정합니다. 실제 모델을 고정하므로 사용자의 사고 수준 변경과 pi의 캐시 데우기가 그대로 동작합니다.
+- orchestrator를 뛴 역할을 pi-subagents runtime agent `pi-team.<role>`로 등록합니다. 정의는 `roleAgent(..., 'main')`이며, 팀용과 다른 점은 다음과 같습니다.
+  - 팀 메일 도구가 없습니다.
+  - `subagentOnlyExtensions`에 `models.ts`가 들어갑니다.
+  - 프롬프트가 「팀 worktree」 대신 「현재 저장소」를 가리킵니다.
+  - 쓰기 역할도 허용합니다.
+- 시스템 프롬프트에는 `sections['pi-team-main']`으로 역할 목록과 지시문 원칙을 넣습니다. 바뀐 구역만 패치되므로 캐시는 한 번만 다시 씁니다.
+- 설정은 세션 custom entry `pi-team-main`에 저장하고, 재개하면 agent 등록만 복원합니다. 모델은 pi가 복원합니다. `teams/main.json`은 새 세션(`startup`·`new`)에만 적용하고, `--model`이 있으면 적용하지 않습니다.
+- `agent_settled` 때 마지막 assistant 메시지가 `stopReason: "error"`이면 다음과 같이 처리합니다.
+  - 오류를 분류해 cooldown에 기록합니다.
+  - 다른 orchestrator 후보가 있으면 `ui.select`로 전환 여부를 묻고, 바꾸면 prompt cache를 잃는다고 알립니다.
+  - 분류되지 않은 문맥 초과 오류는 묻지 않습니다. 실패한 메시지 하나에는 한 번만 묻습니다.
+- `subagent` 호출이 팀 전용 agent(`pi-team.<preset>-<role>`)를 가리키면 막습니다. 이 agent는 팀의 child 확장과 worktree 없이는 실패하기 때문입니다.
 
 ## 5. 팀 생성·worktree·정리
 

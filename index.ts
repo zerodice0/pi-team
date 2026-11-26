@@ -5,14 +5,15 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { realpathSync } from 'node:fs';
-import { aliasHints, delegate, readTargets, showAliases, startNamed, type TeamTargets } from './aliases.ts';
+import { aliasHints, delegate, readTargets, resolveTarget, showAliases, startNamed, type TeamTargets } from './aliases.ts';
 import { board, status, widget } from './board.ts';
 import { closeTeam, findSummary, parseStart, report, roleList, splitGoal } from './lifecycle.ts';
 import { registerMailbox, send, sendParams } from './mailbox.ts';
 import { teamPanel } from './panel.ts';
 import { herdrStatus } from './herdr-status.ts';
 import { participant, type ParticipantRuntime } from './participant.ts';
-import { childEntry, generateAgents, imageDisabled, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
+import { authGaps, childEntry, generateAgents, imageDisabled, presetCatalog, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
+import { mainMode } from './main.ts';
 import { skillCatalog, skillSize } from './skills.ts';
 import { backfillStats, loadStats, retroAsk, retroReport, roleSkills, statsReport, trackRun, writeRetro } from './stats.ts';
 import { errorCode, getTeam, git, isLive, members, teamDir, teams, text, writeJson, type FleetEntry, type Team } from './registry.ts';
@@ -62,7 +63,15 @@ function teamStatus(select?: string) {
   const info = status(team);
   return { team, state: info.state, lead: info.lead, members: info.rows, diff: info.diff, messages: info.sent.length, summary };
 }
-function registerMainLoader(pi: ExtensionAPI, refresh: () => void, targets: TeamTargets) {
+// Warn when a preset would not run on its first choices here, e.g. mix on a Claude-only host.
+function gapNote(ctx: ExtensionContext, targets: TeamTargets, cwd: string, input: string) {
+  try {
+    const { preset } = resolveTarget(targets, input);
+    const gaps = authGaps(readPresets(cwd)[preset] ?? {}, ctx.modelRegistry);
+    return gaps.length ? `\nNote: on this host ${preset} is not on its first choice for ${gaps.join(', ')}. A preset for the signed-in accounts (for example claude or codex) avoids that.` : '';
+  } catch { return ''; }
+}
+function registerMainLoader(pi: ExtensionAPI, refresh: () => void, targets: TeamTargets, cwd: string) {
   const hints = aliasHints(targets);
   const activation = hints
     ? `Only call when the user expressly asks you to create or manage a Pi team or to delegate work to a named team. Configured team aliases: ${hints}. Use team_delegate for named-team delegation even if the team already exists.`
@@ -76,7 +85,7 @@ function registerMainLoader(pi: ExtensionAPI, refresh: () => void, targets: Team
       if (!installed) {
         pi.registerTool({ name: 'team_start', label: 'Start team', description: 'Create a new Pi team from a preset or alias and give the user its interactive lead. Only when explicitly requested.',
           parameters: Type.Object({ preset: Type.String(), name: Type.Optional(Type.String()), base: Type.Optional(Type.String()), fromDirty: Type.Optional(Type.Boolean()), goal: Type.String(), icon: Type.Optional(Type.String({ description: 'One emoji that identifies the team, if the user asked for one.' })) }),
-          async execute(_id, p, _signal, _update, ctx) { const result = startNamed(ctx.cwd, targets, p); refresh(); return text(result); } });
+          async execute(_id, p, _signal, _update, ctx) { const result = startNamed(ctx.cwd, targets, p); refresh(); return text(result + gapNote(ctx, targets, cwd, p.preset)); } });
         pi.registerTool({ name: 'team_status', label: 'Team status', description: 'Read active team registry or the selected team summary.', parameters: Type.Object({ team: Type.Optional(Type.String()) }),
           async execute(_id, p) { return text(JSON.stringify(teamStatus(p.team))); } });
         pi.registerTool({ name: 'team_send', label: 'Send to team lead', description: 'Send a direct message to an exact lead@<team> address. For assigning work to a named team, use team_delegate instead, even if you know its address.', parameters: sendParams,
@@ -86,7 +95,7 @@ function registerMainLoader(pi: ExtensionAPI, refresh: () => void, targets: Team
           async execute(_id, p, _signal, _update, ctx) {
             const result = delegate(ctx.cwd, targets, p.team, p.task, p.fromDirty);
             refresh();
-            return text(result);
+            return text(result + gapNote(ctx, targets, cwd, p.team));
           } });
         installed = true;
       }
@@ -170,9 +179,10 @@ export default async function piTeam(pi: ExtensionAPI) {
   const targets = team ? undefined : readTargets(configCwd, presets);
   const refresh = widget(pi);
   const panel = teamPanel(pi, team?.id);
+  const main = targets ? mainMode(pi, () => readPresets(configCwd), configCwd) : undefined;
   if (targets) {
-    registerModels(pi, presets);
-    registerMainLoader(pi, refresh, targets);
+    registerModels(pi, presets, undefined, { skipOrchestrator: true });
+    registerMainLoader(pi, refresh, targets, configCwd);
     generateAgents(presets);
   }
   let state: ParticipantRuntime | undefined;
@@ -264,7 +274,11 @@ export default async function piTeam(pi: ExtensionAPI) {
       if (verb === 'stats' && /^import(\s+--dry-run)?$/.test(args.trim())) return show(ctx, backfillStats(args.includes('--dry-run')));
       if (verb === 'stats' && /^retro\s+\S+$/.test(args.trim())) return show(ctx, retroReport(args.trim().split(/\s+/)[1]));
       if (verb === 'stats') return show(ctx, statsReport(loadStats(), args.trim() || undefined));
-      if (verb === 'preset' && /^show(?:\s+\S+)?$/.test(args)) return show(ctx, presetView(team ? presets : readPresets(configCwd), ctx, args.split(/\s+/)[1]));
+      if (verb === 'preset' && /^show(?:\s+\S+)?$/.test(args)) {
+        const catalog = team ? { presets, descriptions: {}, problems: {} } : presetCatalog(configCwd);
+        return show(ctx, presetView(catalog.presets, ctx, args.split(/\s+/)[1], catalog));
+      }
+      if (main && verb === 'main') return show(ctx, await main.command(args, ctx));
       if (verb === 'send') {
         const m = /^(\S+)\s+(?:--\s+)?([\s\S]+)$/.exec(args);
         if (!m) throw new Error('Usage: /team send <address> [--] <message>');
@@ -276,11 +290,12 @@ export default async function piTeam(pi: ExtensionAPI) {
         const path = report(team, summary, 'done'); state.update('done'); return show(ctx, path);
       }
       if (targets && verb === 'start') {
-        const output = startNamed(ctx.cwd, targets, parseStart(args)); refresh(); return show(ctx, output);
+        const parsed = parseStart(args);
+        const output = startNamed(ctx.cwd, targets, parsed); refresh(); return show(ctx, output + gapNote(ctx, targets, configCwd, parsed.preset));
       }
       if (targets && verb === 'delegate') {
         const { target, goal } = splitGoal(args, 'Usage: /team delegate <alias or preset> -- <task>');
-        const output = delegate(ctx.cwd, targets, target, goal); refresh(); return show(ctx, output);
+        const output = delegate(ctx.cwd, targets, target, goal); refresh(); return show(ctx, output + gapNote(ctx, targets, configCwd, target));
       }
       if (targets && verb === 'alias' && args === 'show') return show(ctx, showAliases(targets));
       if (!team && verb === 'close') {
@@ -295,7 +310,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         pi.sendMessage({ customType: 'pi-team-summary', content: summary, display: true, details: { team: args } }, { deliverAs: 'nextTurn' });
         return show(ctx, `Queued ${args} summary for the next user turn (no model request).`);
       }
-      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | send <address> <body>${team ? ' | done [summary]' : ' | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
+      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | send <address> <body>${team ? ' | done [summary]' : ' | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
     } catch (e) { if (ctx.hasUI) ctx.ui.notify(e instanceof Error ? e.message : String(e), 'error'); else throw e; }
   } });
 }

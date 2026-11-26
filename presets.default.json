@@ -1,0 +1,410 @@
+{
+  "version": 2,
+  "models": {
+    "opus": "anthropic/claude-opus-5-5",
+    "fable": "anthropic/claude-fable-5-2",
+    "sonnet": "anthropic/claude-sonnet-5-5",
+    "haiku": "anthropic/claude-haiku-5-5",
+    "astra": "openai-codex/gpt-6.2-astra",
+    "sol": "openai-codex/gpt-6.2-sol",
+    "luna": "openai-codex/gpt-6-luna"
+  },
+  "presets": {
+    "base": {
+      "abstract": true,
+      "description": "Roles shared by every preset; models come from the preset's slots.",
+      "roles": {
+        "orchestrator": {
+          "models": [
+            "@lead"
+          ]
+        },
+        "task": {
+          "models": [
+            "@build"
+          ],
+          "max": 3
+        },
+        "scout": {
+          "models": [
+            "@scout"
+          ],
+          "readOnly": true
+        },
+        "reviewer": {
+          "models": [
+            "@deep"
+          ],
+          "readOnly": true
+        },
+        "vision": {
+          "models": [
+            "@vision"
+          ],
+          "readOnly": true
+        },
+        "image": {
+          "models": [
+            "@image"
+          ]
+        },
+        "modeler": {
+          "models": [
+            "@deep"
+          ],
+          "description": "3D work in its own headless Blender: modeling, materials, UV and texturing, lighting, rendering, animation, reference-to-3D reconstruction and glTF/FBX export",
+          "skills": [
+            "text-to-blender",
+            "blender-pro-workflow",
+            "blender-skill-harmonizer",
+            "blender-modeling",
+            "blender-modeling-modifiers",
+            "blender-geometry-nodes",
+            "blender-materials",
+            "blender-shader-nodes",
+            "blender-uv-texturing",
+            "atlas-uv-fitting",
+            "closed-surface-uv-coverage",
+            "texture-driven-mesh-fitting",
+            "blender-lighting",
+            "blender-cameras",
+            "blender-rendering",
+            "blender-scene-rendering",
+            "blender-compositing-nodes",
+            "blender-export",
+            "blender-python-scripting",
+            "blender-animation",
+            "blender-animation-rigging",
+            "blender-physics-simulation",
+            "texture-state-animation",
+            "orbital-hud-motion",
+            "wireframe-to-3d",
+            "reference-to-3d",
+            "mascot-logo-reconstruction",
+            "orthographic-registration",
+            "multiview-constraint-solver",
+            "multiview-fit-loop",
+            "contour-to-mesh",
+            "source-part-segmentation",
+            "landmark-fit-repair",
+            "fit-repair-optimizer",
+            "reference-analysis-validator",
+            "reference-look-calibration",
+            "animation-quality-gate",
+            "quality-refinement-autoloop"
+          ],
+          "mcp": [
+            "blender"
+          ]
+        },
+        "ui-designer": {
+          "models": [
+            "@deep"
+          ],
+          "description": "Web and app UI design and polish: layout, typography, color, design systems and visual redesign",
+          "skills": [
+            "impeccable",
+            "ui-ux-pro-max",
+            "frontend-design",
+            "interface-design",
+            "design-system",
+            "design-taste-frontend",
+            "ui-styling",
+            "baseline-ui"
+          ]
+        },
+        "flutter-designer": {
+          "models": [
+            "@deep"
+          ],
+          "description": "Flutter screen and widget design with production-grade visual quality",
+          "skills": [
+            "flutter-frontend-design",
+            "ui-ux-pro-max",
+            "design-system"
+          ]
+        },
+        "ux-reviewer": {
+          "models": [
+            "@deep"
+          ],
+          "readOnly": true,
+          "description": "Read-only usability and accessibility review of screens, flows and UI code",
+          "skills": [
+            "ux-heuristics",
+            "accessibility-review",
+            "improve-ui"
+          ]
+        },
+        "motion-designer": {
+          "models": [
+            "@deep"
+          ],
+          "description": "Animation and transition design, motion polish and animation performance fixes",
+          "skills": [
+            "emil-design-eng",
+            "review-animations",
+            "improve-animations",
+            "fixing-motion-performance"
+          ]
+        },
+        "frontend-dev": {
+          "models": [
+            "@build"
+          ],
+          "description": "Web frontend implementation: components, styling and accessibility fixes",
+          "skills": [
+            "frontend-design",
+            "ui-styling",
+            "baseline-ui",
+            "fixing-accessibility"
+          ]
+        },
+        "mobile-dev": {
+          "models": [
+            "@build"
+          ],
+          "description": "Flutter and native Kotlin/Swift app implementation, Android CLI and device runs",
+          "skills": [
+            "flutter-frontend-design",
+            "flutter-docs-latest",
+            "kotlin-docs-latest",
+            "swift-docs-latest",
+            "android-cli"
+          ]
+        },
+        "game-dev": {
+          "models": [
+            "@build"
+          ],
+          "description": "Game implementation, game feel and game UI/HUD",
+          "skills": [
+            "game-feel",
+            "game-ui-ux"
+          ]
+        },
+        "cloud-dev": {
+          "models": [
+            "@build"
+          ],
+          "description": "Cloudflare Workers, Durable Objects, storage and deployment",
+          "skills": [
+            "cloudflare",
+            "wrangler",
+            "workers-best-practices",
+            "workers-development",
+            "durable-objects",
+            "agents-sdk",
+            "cloudflare-email-service",
+            "cloudflare-deploy"
+          ],
+          "prompt": "Do not deploy, publish or change live Cloudflare resources unless the lead says the user approved it; report the exact command instead."
+        },
+        "security-reviewer": {
+          "models": [
+            "@deep"
+          ],
+          "readOnly": true,
+          "tools": [
+            "read",
+            "grep",
+            "find",
+            "ls",
+            "bash"
+          ],
+          "description": "Read-only security review, threat modeling and code ownership analysis",
+          "skills": [
+            "security-best-practices",
+            "security-threat-model",
+            "security-ownership-map"
+          ],
+          "prompt": "Use bash only to inspect (git log, grep, running analysis scripts); do not change files."
+        },
+        "qa-tester": {
+          "models": [
+            "@build"
+          ],
+          "description": "Headless browser verification of web UIs with Playwright: navigate, interact, snapshot and screenshot",
+          "skills": [
+            "playwright"
+          ],
+          "prompt": "Run the browser headless with ~/.agents/skills/playwright/scripts/playwright_cli.sh (the $CODEX_HOME path in the skill does not apply here) and always open with --browser chromium; never use --headed. Keep snapshots and screenshots under artifacts/ in the team worktree, close the browser when done, and do not modify product source."
+        },
+        "tech-writer": {
+          "models": [
+            "@write"
+          ],
+          "description": "Technical documents, reports and READMEs in Korean or English",
+          "skills": [
+            "fluent-korean"
+          ]
+        },
+        "reverse-engineer": {
+          "models": [
+            "@deep"
+          ],
+          "description": "Reverse engineering of shipped binaries, apps, packages, firmware and web targets with REA and Ghidra: decompile, explain features, compare versions, collect evidence",
+          "skills": [
+            "reverse-engineer-anything"
+          ],
+          "mcp": [
+            "rea"
+          ],
+          "prompt": "Analyze only the targets the lead names. Do not modify product source; write evidence bundles, notes and reports under artifacts/ in the team worktree. Do not run, install or attach to a target unless the lead says the user approved it; static analysis needs no approval."
+        }
+      }
+    },
+    "mix": {
+      "extends": "base",
+      "description": "Claude lead, Codex members, each falling back to the other account.",
+      "slots": {
+        "lead": [
+          "opus:high",
+          "sol:xhigh"
+        ],
+        "build": [
+          "sol:medium",
+          "opus:high"
+        ],
+        "deep": [
+          "sol:high",
+          "opus:high"
+        ],
+        "scout": [
+          "luna:high",
+          "sol:medium"
+        ],
+        "vision": [
+          "sol:high",
+          "opus:high"
+        ],
+        "write": [
+          "opus:high",
+          "sol:high"
+        ],
+        "image": [
+          "sol:medium"
+        ]
+      }
+    },
+    "advanced": {
+      "extends": "mix",
+      "description": "mix with a Fable lead.",
+      "slots": {
+        "lead": [
+          "fable:high",
+          "opus:high"
+        ]
+      }
+    },
+    "claude": {
+      "extends": "base",
+      "description": "Claude only: Opus lead, Sonnet builders, Haiku scouts; no image role.",
+      "slots": {
+        "lead": [
+          "opus:high"
+        ],
+        "build": [
+          "sonnet:medium",
+          "opus:medium"
+        ],
+        "deep": [
+          "opus:high",
+          "sonnet:high"
+        ],
+        "scout": [
+          "haiku:medium",
+          "sonnet:medium"
+        ],
+        "vision": [
+          "opus:high",
+          "sonnet:high"
+        ],
+        "write": [
+          "opus:high",
+          "sonnet:high"
+        ]
+      },
+      "roles": {
+        "image": null
+      }
+    },
+    "claude-advanced": {
+      "extends": "claude",
+      "description": "Claude only with a Fable lead and Opus builders.",
+      "slots": {
+        "lead": [
+          "fable:xhigh",
+          "opus:xhigh"
+        ],
+        "build": [
+          "opus:high",
+          "sonnet:high"
+        ],
+        "scout": [
+          "sonnet:medium",
+          "haiku:medium"
+        ]
+      }
+    },
+    "codex": {
+      "extends": "base",
+      "description": "Codex only around GPT-6.2 Sol.",
+      "slots": {
+        "lead": [
+          "sol:xhigh",
+          "astra:high"
+        ],
+        "build": [
+          "sol:medium",
+          "luna:high"
+        ],
+        "deep": [
+          "sol:high",
+          "astra:high"
+        ],
+        "scout": [
+          "luna:high",
+          "sol:medium"
+        ],
+        "vision": [
+          "sol:high",
+          "astra:high"
+        ],
+        "write": [
+          "sol:high",
+          "astra:high"
+        ],
+        "image": [
+          "sol:medium"
+        ]
+      }
+    },
+    "codex-advanced": {
+      "extends": "codex",
+      "description": "Codex only around GPT-6.2 Astra.",
+      "slots": {
+        "lead": [
+          "astra:xhigh",
+          "sol:xhigh"
+        ],
+        "build": [
+          "sol:high",
+          "astra:medium"
+        ],
+        "deep": [
+          "astra:high",
+          "sol:high"
+        ],
+        "vision": [
+          "astra:high",
+          "sol:high"
+        ],
+        "write": [
+          "astra:high",
+          "sol:high"
+        ]
+      }
+    }
+  }
+}

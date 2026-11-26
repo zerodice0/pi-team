@@ -47,7 +47,7 @@ export function readTargets(cwd: string, presets: Presets): TeamTargets {
   return targets;
 }
 
-function resolve(targets: TeamTargets, input: string) {
+export function resolveTarget(targets: TeamTargets, input: string) {
   const exact = input.trim().toLowerCase();
   const name = normalized(input);
   const alias = targets.aliases.get(exact) ?? targets.byName.get(name);
@@ -85,11 +85,11 @@ export function showAliases(targets: TeamTargets) {
 }
 
 export function startNamed(cwd: string, targets: TeamTargets, params: Start) {
-  const { preset, alias } = resolve(targets, params.preset);
+  const { preset, alias } = resolveTarget(targets, params.preset);
   return start(cwd, { ...params, preset, base: params.base ?? alias?.base }, alias);
 }
 export function delegate(cwd: string, targets: TeamTargets, input: string, task: string, fromDirty = false) {
-  const { preset, alias } = resolve(targets, input);
+  const { preset, alias } = resolveTarget(targets, input);
   if (!alias) return start(cwd, { preset, goal: task, fromDirty });
   return locked(join(root, `.alias-${alias.key}.lock`), () => {
     const team = currentTeams().get(alias.key);

@@ -23,16 +23,8 @@ const mcpServers: Record<string, { extension: string; tools: string[]; prompt: s
   },
 };
 export type Presets = Record<string, Record<string, Role>>;
-const sol = 'openai-codex/gpt-6.2-sol';
-const opus = 'anthropic/claude-opus-5-5:high';
-const defaultPresets: Presets = { mix: {
-  orchestrator: { models: [opus, `${sol}:xhigh`] },
-  task: { models: [`${sol}:medium`, opus], max: 3 },
-  scout: { models: ['openai-codex/gpt-6-luna:high', `${sol}:medium`], readOnly: true },
-  reviewer: { models: [`${sol}:high`, opus], readOnly: true },
-  vision: { models: [`${sol}:high`, opus], readOnly: true },
-  image: { models: [`${sol}:medium`] },
-} };
+const here = dirname(fileURLToPath(import.meta.url));
+const defaultsPath = join(here, 'presets.default.json');
 const levels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 const candidatePattern = /^([\w.-]+)\/([\w./-]+):((?:off|minimal|low|medium|high|xhigh|max))$/;
 function candidate(s: string) {
@@ -65,14 +57,124 @@ function validate(value: Presets | undefined, relativeTo: string): Presets {
   }
   return result;
 }
+// Preset files come in layers: the defaults shipped with pi-team, then ~/.pi/agent/teams/presets.json,
+// then <repo>/.pi/teams/presets.json. A version 2 layer merges into the layers below it:
+//   models  - aliases for physical models, e.g. "opus": "anthropic/claude-opus-5-5" (change one line per release)
+//   presets - { extends, abstract, description, slots, roles }; slots map a slot name to candidates such as
+//             "opus:high", and a role's models may name a slot as "@lead". A role set to null is removed.
+// A file without "version" is the older flat form; each preset in it replaces the one of that name.
+type RawRole = Omit<Role, 'models'> & { models?: string | string[] };
+interface PresetDef { extends?: string; abstract?: boolean; description?: string; slots?: Record<string, string[]>; roles?: Record<string, RawRole | null>; replace?: boolean }
+interface Layer { models: Record<string, string>; presets: Record<string, PresetDef> }
+export interface Catalog { presets: Presets; descriptions: Record<string, string>; problems: Record<string, string> }
+const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
+const aliasPattern = /^[a-z][\w.-]*$/;
+const physicalPattern = /^[\w.-]+\/[\w./-]+$/;
+function readLayer(path: string, relativeTo: string): Layer {
+  const data = readJson<unknown>(path);
+  if (data === undefined) return { models: {}, presets: {} };
+  if (!plain(data)) throw new Error(`Presets must be a JSON object: ${path}`);
+  const fixPaths = (role: RawRole) => role.extensions && Array.isArray(role.extensions)
+    ? { ...role, extensions: role.extensions.map(p => typeof p === 'string' && p && !isAbsolute(p) ? resolve(relativeTo, p) : p) } : role;
+  if (data.version === undefined) {
+    const presets: Record<string, PresetDef> = {};
+    for (const [name, roles] of Object.entries(data)) {
+      presets[name] = { replace: true, roles: plain(roles) ? Object.fromEntries(Object.entries(roles).map(([r, v]) => [r, plain(v) ? fixPaths(v as RawRole) : v as null])) : roles as never };
+    }
+    return { models: {}, presets };
+  }
+  if (data.version !== 2) throw new Error(`Unsupported presets version in ${path}: ${String(data.version)}`);
+  const models = data.models ?? {};
+  if (!plain(models) || Object.entries(models).some(([k, v]) => !aliasPattern.test(k) || typeof v !== 'string' || !physicalPattern.test(v))) {
+    throw new Error(`Invalid models in ${path}: map an alias such as "opus" to "provider/model-id".`);
+  }
+  const presets = data.presets ?? {};
+  if (!plain(presets)) throw new Error(`Invalid presets in ${path}.`);
+  const result: Record<string, PresetDef> = {};
+  for (const [name, def] of Object.entries(presets)) {
+    if (!plain(def)) { result[name] = { replace: true, roles: 'invalid' as never }; continue; }
+    const roles = plain(def.roles) ? Object.fromEntries(Object.entries(def.roles).map(([r, v]) => [r, plain(v) ? fixPaths(v as RawRole) : v as null])) : def.roles;
+    result[name] = { ...def, roles } as PresetDef;
+  }
+  return { models: models as Record<string, string>, presets: result };
+}
+function merge(layers: Layer[]) {
+  const models: Record<string, string> = {};
+  const presets: Record<string, PresetDef> = {};
+  for (const layer of layers) {
+    Object.assign(models, layer.models);
+    for (const [name, def] of Object.entries(layer.presets)) {
+      const prior = presets[name];
+      if (!prior || def.replace) { presets[name] = def; continue; }
+      const roles: Record<string, RawRole | null> = { ...prior.roles };
+      for (const [role, value] of Object.entries(def.roles ?? {})) roles[role] = value && roles[role] ? { ...roles[role], ...value } : value;
+      presets[name] = { ...prior, ...def, slots: { ...prior.slots, ...def.slots }, roles };
+    }
+  }
+  return { models, presets };
+}
+function resolvePreset(name: string, defs: Record<string, PresetDef>, models: Record<string, string>): Record<string, Role> {
+  const chain: PresetDef[] = [];
+  for (let at: string | undefined = name; at !== undefined;) {
+    const def: PresetDef | undefined = defs[at];
+    if (!def) throw new Error(`extends unknown preset ${at}`);
+    if (chain.includes(def)) throw new Error(`extends loop at ${at}`);
+    if ((def.roles !== undefined && !plain(def.roles)) || (def.slots !== undefined && !plain(def.slots)) ||
+        (def.extends !== undefined && typeof def.extends !== 'string')) throw new Error(`malformed preset ${at}`);
+    chain.unshift(def);
+    at = def.replace ? undefined : def.extends;
+  }
+  const slots: Record<string, string[]> = {};
+  const roles: Record<string, RawRole | null> = {};
+  for (const def of chain) {
+    Object.assign(slots, def.slots);
+    for (const [role, value] of Object.entries(def.roles ?? {})) roles[role] = value && roles[role] ? { ...roles[role], ...value } : value;
+  }
+  const physical = (c: string) => {
+    if (typeof c !== 'string') throw new Error(`model candidates must be strings`);
+    const m = /^([^/:]+):([a-z]+)$/.exec(c);
+    if (!m || c.includes('/')) return c;
+    if (!Object.hasOwn(models, m[1])) throw new Error(`unknown model alias ${m[1]} in ${c}`);
+    return `${models[m[1]]}:${m[2]}`;
+  };
+  const result: Record<string, Role> = {};
+  for (const [role, raw] of Object.entries(roles)) {
+    if (raw === null) continue;
+    if (!plain(raw)) throw new Error(`role ${role} must be an object or null`);
+    const list = raw.models === undefined ? [] : Array.isArray(raw.models) ? raw.models : [raw.models];
+    const expanded = list.flatMap(entry => {
+      if (typeof entry !== 'string' || !entry.startsWith('@')) return [physical(entry)];
+      const slot = slots[entry.slice(1)];
+      if (!Array.isArray(slot) || !slot.length) throw new Error(`role ${role} uses slot ${entry}, which this preset does not define`);
+      return slot.map(physical);
+    });
+    result[role] = { ...raw, models: [...new Set(expanded)] };
+  }
+  return result;
+}
+export function presetCatalog(cwd: string): Catalog {
+  const { models, presets: defs } = merge([readLayer(defaultsPath, here), readLayer(join(root, 'presets.json'), root), readLayer(join(cwd, '.pi', 'teams', 'presets.json'), cwd)]);
+  const catalog: Catalog = { presets: {}, descriptions: {}, problems: {} };
+  // One broken preset must not take the others down: teams started from them keep working.
+  for (const [name, def] of Object.entries(defs)) {
+    if (def.abstract) continue;
+    try {
+      Object.assign(catalog.presets, validate({ [name]: resolvePreset(name, defs, models) }, root));
+      if (typeof def.description === 'string') catalog.descriptions[name] = def.description;
+    } catch (e) { catalog.problems[name] = e instanceof Error ? e.message : String(e); }
+  }
+  return catalog;
+}
 export function readPresets(cwd: string, team?: string): Presets {
-  const path = join(root, 'presets.json');
-  if (!exists(path)) locked(join(root, '.presets.lock'), () => { if (!exists(path)) writeJson(path, defaultPresets); });
   if (team) {
     const captured = readJson<Presets>(join(teamDir(team), 'preset.json'));
     if (captured) return validate(captured, cwd);
   }
-  return { ...validate(readJson<Presets>(path), root), ...validate(readJson<Presets>(join(cwd, '.pi', 'teams', 'presets.json')), cwd) };
+  return presetCatalog(cwd).presets;
+}
+export function unknownPreset(cwd: string, preset: string) {
+  const problem = presetCatalog(cwd).problems[preset];
+  return new Error(problem ? `Preset ${preset} is invalid: ${problem}` : `Unknown preset: ${preset}`);
 }
 export const imageEntry = join(root, 'vendor', 'node_modules', 'pi-codex-image-gen', 'index.ts');
 export const imageDisabled = () => readJson<{ reason: string; at: number }>(join(root, 'image-disabled.json'))?.reason
@@ -80,23 +182,32 @@ export const imageDisabled = () => readJson<{ reason: string; at: number }>(join
 const mailTools = ['team_peers', 'team_send', 'team_inbox', 'team_wait'];
 const managed = '<!-- Generated by pi-team -->';
 export const childEntry = fileURLToPath(new URL('./child.ts', import.meta.url));
-export function roleAgent(preset: string, role: string, item: Role) {
+// Registers the role virtual models in members the main session delegates to; foreground
+// children never load the parent's extensions, so without it team/<preset>.<role> is unknown there.
+export const modelsEntry = fileURLToPath(new URL('./models.ts', import.meta.url));
+export const mainAgentName = (role: string) => `pi-team.${role}`;
+export function roleAgent(preset: string, role: string, item: Role, mode: 'team' | 'main' = 'team') {
+  const main = mode === 'main';
   const defaults = role === 'image' ? ['read', 'codex_generate_image'] : item.readOnly ? ['read', 'grep', 'find', 'ls'] : ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls'];
   const excludeTools = item.readOnly ? ['write', 'edit'] : [];
   const mcp = item.mcp ?? [];
-  const tools = [...new Set([...(item.tools ?? defaults), ...mailTools, ...mcp.flatMap(name => mcpServers[name].tools),
+  const tools = [...new Set([...(item.tools ?? defaults), ...(main ? [] : mailTools), ...mcp.flatMap(name => mcpServers[name].tools),
     ...(role === 'vision' ? ['read'] : []), ...(role === 'image' ? ['codex_generate_image'] : [])])]
     .filter(tool => !excludeTools.includes(tool));
-  const subagentOnlyExtensions = [...new Set([...(item.extensions ?? []), ...mcp.map(name => mcpServers[name].extension), ...(role === 'image' ? [imageEntry] : [])])];
+  const subagentOnlyExtensions = [...new Set([...(main ? [modelsEntry] : []), ...(item.extensions ?? []), ...mcp.map(name => mcpServers[name].extension), ...(role === 'image' ? [imageEntry] : [])])];
   const systemPrompt = [
-    `You are the ${role} member. Stay inside the team worktree; use team_peers, team_send, team_inbox and team_wait to coordinate. Give the lead a concise final result.`,
-    'Follow the brief\'s Limits: append to the notes file after each step and stop to report before the time box ends, even if unfinished. If the brief leaves a choice open, take the safer option and state it; ask the lead with team_send only when a wrong guess would waste the work.',
+    main
+      ? `You are the ${role} member the main session delegated to. Work in the current repository within the scope the brief gives, and give a concise final result.`
+      : `You are the ${role} member. Stay inside the team worktree; use team_peers, team_send, team_inbox and team_wait to coordinate. Give the lead a concise final result.`,
+    main
+      ? 'Follow the brief\'s Limits: append to the notes file after each step and stop to report before the time box ends, even if unfinished. If the brief leaves a choice open, take the safer option and state it.'
+      : 'Follow the brief\'s Limits: append to the notes file after each step and stop to report before the time box ends, even if unfinished. If the brief leaves a choice open, take the safer option and state it; ask the lead with team_send only when a wrong guess would waste the work.',
     'End with a short report under these headings: Result; Checks (run, with outcome, and not run); Open issues; Changed files (or none); Artifacts (paths). Never report an unrun check as passed.',
     'Keep your context small; it is re-read on every turn. Read large files with line ranges or rg instead of printing whole files, and do not reread a file or image you already have unless it changed. When you are resumed for a follow-up, build on what you already read.',
     role === 'vision' ? 'Use `read` on the supplied image path and describe the actual visual content.' : '',
     role === 'image' ? 'Use codex_generate_image with save="custom", saveDir="artifacts", outputFormat="png". Report the saved PNG path or the exact tool error; do not substitute another image generator.' : '',
-    ...mcp.map(name => mcpServers[name].prompt),
-    item.prompt?.trim(),
+    ...mcp.map(name => mcpServers[name].prompt.replaceAll('team worktree', main ? 'repository' : 'team worktree')),
+    item.prompt?.trim().replaceAll('team worktree', main ? 'repository' : 'team worktree'),
   ].filter(Boolean).join('\n\n');
   const description = `pi-team ${preset} ${role} member${item.description ? `: ${item.description.trim()}` : ''}`;
   return { description, model: `team/${preset}.${role}`, tools, excludeTools, skills: item.skills ?? [], extensions: [], subagentOnlyExtensions, systemPrompt };
@@ -133,7 +244,7 @@ export function classify(message: string): Kind | undefined {
   if (/\b(?:529|503)\b|overload/i.test(message)) return 'overloaded';
   if (/\b(?:401|403)\b/.test(message)) return 'auth';
 }
-export function recordFailure(team: string, from: string, model: string, error: string, sideEffects: boolean) {
+export function recordCooldown(model: string, error: string) {
   const reason = classify(error);
   if (!reason) return;
   const at = Date.now();
@@ -143,25 +254,38 @@ export function recordFailure(team: string, from: string, model: string, error: 
     current[model] = { until: Math.max(current[model]?.until ?? 0, until), reason };
     writeJson(join(root, 'cooldown.json'), current);
   });
-  log(team, { event: 'fallback', at, from, model, reason, sideEffects, until });
+  return { reason, at, until };
 }
-export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (model: string, fallback: boolean) => void) {
+export function recordFailure(team: string, from: string, model: string, error: string, sideEffects: boolean) {
+  const cooled = recordCooldown(model, error);
+  if (cooled) log(team, { event: 'fallback', at: cooled.at, from, model, reason: cooled.reason, sideEffects, until: cooled.until });
+}
+export interface Choice { key: string; level: ThinkingLevel; index: number; model: NonNullable<ReturnType<ExtensionContext['modelRegistry']['find']>>; until: number }
+// Authenticated candidates of a chain in order, with their cooldown end (0 when ready).
+export function candidates(models: string[], registry: ExtensionContext["modelRegistry"]): Choice[] {
+  const cd = cooldowns();
+  return models.map(candidate).flatMap((c, index) => {
+    const model = registry.find(c.provider, c.id);
+    return model && registry.hasConfiguredAuth(model) ? [{ key: c.key, level: c.level, index, model, until: cd[c.key]?.until ?? 0 }] : [];
+  });
+}
+export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (model: string, fallback: boolean) => void, options: { skipOrchestrator?: boolean } = {}) {
   for (const [preset, roles] of Object.entries(presets)) for (const [role, item] of Object.entries(roles)) {
     if (role === 'image' && imageDisabled()) continue;
+    // The main session never runs a lead; listing team/<preset>.orchestrator there only invites
+    // picking it as the main model, which ignores the thinking level and loses cache warming.
+    if (options.skipOrchestrator && role === 'orchestrator') continue;
     const id = `${preset}.${role}`;
-    const chain = item.models.map(candidate);
     pi.registerVirtualModel({ provider: 'team', id, name: `Team ${id}`, thinkingLevels: [...levels], route(request, ctx) {
       const disabled = role === 'image' && imageDisabled();
       if (disabled) throw new Error(`Image role disabled: ${disabled}`);
-      const cd = cooldowns();
       const now = Date.now();
       const failed = request.reason === 'retry' && request.failed?.model;
-      const available = chain.flatMap((c, index) => {
-        const model = ctx.modelRegistry.find(c.provider, c.id);
-        return model && ctx.modelRegistry.hasConfiguredAuth(model) && !(failed && failed.id === c.id && failed.provider === c.provider)
-          ? [{ ...c, index, model, until: cd[c.key]?.until ?? 0 }] : [];
-      });
-      let choice = available.find(c => c.until <= now);
+      const available = candidates(item.models, ctx.modelRegistry).filter(c => !(failed && failed.id === c.model.id && failed.provider === c.model.provider));
+      // Within a turn (tool follow-ups, compaction) stay on the model that answered last: switching
+      // there drops the prompt cache. A new user turn or a retry chooses again.
+      const previous = (request.reason === 'continuation' || request.reason === 'direct') ? request.previous?.model : undefined;
+      let choice = (previous && available.find(c => c.model.id === previous.id && c.model.provider === previous.provider)) || available.find(c => c.until <= now);
       if (!choice) {
         choice = available.reduce<(typeof available)[number] | undefined>((best, c) => !best || c.until < best.until ? c : best, undefined);
         if (!choice) throw new Error(`No authenticated candidate available for team/${id}${failed ? ' after retry' : ''}.`);
@@ -173,14 +297,23 @@ export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (mo
     } });
   }
 }
-export function presetView(presets: Presets, ctx: ExtensionContext, select?: string) {
-  if (select && !presets[select]) throw new Error(`Unknown preset: ${select}`);
+export function presetView(presets: Presets, ctx: ExtensionContext, select?: string, info: Partial<Pick<Catalog, 'descriptions' | 'problems'>> = {}) {
+  if (select && !presets[select]) throw new Error(info.problems?.[select] ? `Preset ${select} is invalid: ${info.problems[select]}` : `Unknown preset: ${select}`);
   const cd = cooldowns();
-  return Object.entries(presets).filter(([p]) => !select || select === p).flatMap(([p, roles]) => [p,
+  const problems = Object.entries(info.problems ?? {}).filter(([p]) => !select || select === p).map(([p, why]) => `${p}: INVALID - ${why}`);
+  return [...problems, ...Object.entries(presets).filter(([p]) => !select || select === p).flatMap(([p, roles]) => [`${p}${info.descriptions?.[p] ? ` - ${info.descriptions[p]}` : ''}`,
     ...Object.entries(roles).map(([role, item]) => `  ${role}: ${item.models.map(s => {
       const c = candidate(s);
       const model = ctx.modelRegistry.find(c.provider, c.id);
       const cooldown = cd[c.key];
       return `${s} [${!model ? 'unavailable' : ctx.modelRegistry.hasConfiguredAuth(model) ? 'auth' : 'no auth'}; ${cooldown && cooldown.until > Date.now() ? `cooldown ${cooldown.reason} until ${new Date(cooldown.until).toISOString()}` : 'ready'}]`;
-    }).join(' → ')}${role === 'image' && imageDisabled() ? ` (disabled: ${imageDisabled()})` : ''}`)]).join('\n');
+    }).join(' → ')}${role === 'image' && imageDisabled() ? ` (disabled: ${imageDisabled()})` : ''}`)])].join('\n');
+}
+// Roles whose first choice cannot run on this host, e.g. Codex candidates where only Claude is signed in.
+export function authGaps(roles: Record<string, Role>, registry: ExtensionContext['modelRegistry']) {
+  return Object.entries(roles).flatMap(([role, item]) => {
+    if (role === 'image' && imageDisabled()) return [];
+    const ready = candidates(item.models, registry);
+    return ready[0]?.index === 0 ? [] : [`${role} (${ready.length ? `falls back to ${ready[0].key}` : 'no signed-in candidate'})`];
+  });
 }

@@ -1,7 +1,7 @@
 import { realpathSync, renameSync, rmSync } from 'node:fs';
 import { dirname, basename, isAbsolute, join, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { generateAgents, imageDisabled, readPresets, type Presets } from './presets.ts';
+import { generateAgents, imageDisabled, readPresets, unknownPreset, type Presets } from './presets.ts';
 import { leadSkillArgs } from './skills.ts';
 import { retroReport, writeRetro } from './stats.ts';
 import { appendLedger, checkIcon, defaultIcon, diffStat, exec, exists, getLead, getTeam, git, isLive, ledger, locked, log, members, mkdir, readText, root, teamDir, teams, writeAtomic, writeJson, type Team, type LedgerEntry } from './registry.ts';
@@ -112,7 +112,7 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
   if (p.icon !== undefined) checkIcon(p.icon, 'Team start');
   const repo = realpathSync(git(cwd, ['rev-parse', '--show-toplevel']));
   const presets = readPresets(repo);
-  if (!Object.hasOwn(presets, p.preset)) throw new Error(`Unknown preset: ${p.preset}`);
+  if (!Object.hasOwn(presets, p.preset)) throw unknownPreset(repo, p.preset);
   const base = p.base ?? 'HEAD';
   const baseCommit = git(repo, ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`]);
   const symbolic = git(repo, ['rev-parse', '--symbolic-full-name', '--end-of-options', base]).split('\n').find(x => x.startsWith('refs/heads/') || x.startsWith('refs/remotes/'));

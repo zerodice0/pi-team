@@ -6,11 +6,12 @@
 - 사용자가 직접 대화하는 **팀장**(대화형 pi 세션)
 - 팀장이 [pi-subagents](https://www.npmjs.com/package/pi-subagents)로 위임하는 역할별 팀원(task, scout, reviewer, vision, image 등)
 
-메인 pi 세션의 모델과 도구는 바뀌지 않습니다. 설계 전문은 [`docs/DESIGN.md`](docs/DESIGN.md)에 있습니다.
+메인 pi 세션의 모델과 도구는 `/team main`을 실행하지 않는 한 바뀌지 않습니다. 설계 전문은 [`docs/DESIGN.md`](docs/DESIGN.md)에 있습니다.
 
 ## 주요 기능
 
-- **역할 → 모델 preset:** 각 역할은 virtual model(`team/<preset>.<role>`)로 등록되며, fallback 체인과 cooldown을 따라 모델을 고릅니다.
+- **역할 → 모델 preset:** 각 역할은 virtual model(`team/<preset>.<role>`)로 등록되며, fallback 체인과 cooldown을 따라 모델을 고릅니다. preset은 상속 구조이므로, 새 모델이 나오면 모델 별칭 한 줄만 바꿉니다. 기본 preset은 `mix`, `advanced`, `claude`, `claude-advanced`, `codex`, `codex-advanced`입니다.
+- **메인 모드(`/team main <preset>`):** 메인 세션이 preset의 orchestrator 모델로 실행되고, 역할별 agent(`pi-team.<role>`)에게 바로 위임합니다.
 - **팀 안 메시징:** 팀원끼리 파일 mailbox로 메시지를 주고받고, `replyTo`로 스레드를 잇습니다. 다른 팀과는 팀장끼리만 주고받습니다.
 - **`/team board`:** 모든 팀의 목표, 각 worktree, 구성원별 실제 모델·상태·현재 도구, 메시지와 요약을 보여 주는 overlay입니다. widget도 함께 표시합니다.
 - **팀 패널(`ctrl+shift+t`·`alt+t`):** 대화를 계속하면서 볼 수 있도록 화면 오른쪽에 떠 있는 패널입니다. 팀마다 진행 요약, 목표, 메인이 마지막으로 보낸 위임, 팀장과 팀원이 지금 하는 일과 모델, 마지막 메시지를 보여 줍니다. fullscreen 모드(pi 기본값)에서는 제목 줄을 마우스로 끌어 옮길 수 있고, 옮긴 위치는 기억합니다.
@@ -40,17 +41,64 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 | `/team send lead@<team> <내용>` | 팀장에게 메시지를 보냅니다. |
 | `/team collect <team>` | 팀 요약을 메인 세션으로 가져옵니다. 모델은 실행하지 않습니다. |
 | `/team close <team> [--confirm-unmerged]` | worktree를 정리합니다. 병합되지 않은 branch는 지우지 않습니다. |
-| `/team preset show` · `/team alias show` | preset과 별칭을 보여 줍니다. |
+| `/team main [<preset>\|off] [--default]` | 메인 모드를 켜거나 끄고, 인자가 없으면 상태를 보여 줍니다. `--default`는 이 호스트의 새 세션에 적용할 기본값을 저장하거나 지웁니다. |
+| `/team preset show [preset]` · `/team alias show` | preset(설명, 후보별 로그인·cooldown 상태, 잘못된 preset의 이유)과 별칭을 보여 줍니다. |
 
 ## 설정 파일
 
-- preset: `~/.pi/agent/teams/presets.json`, 또는 저장소별 `<repo>/.pi/teams/presets.json`
+- preset: pi-team에 들어 있는 `presets.default.json` 위에 `~/.pi/agent/teams/presets.json`, 그 위에 저장소별 `<repo>/.pi/teams/presets.json`을 겹칩니다(아래 「preset 구조」).
+- 메인 모드 기본값: `~/.pi/agent/teams/main.json`(`/team main <preset> --default`로 만듭니다)
 - 별칭: `~/.pi/agent/teams/aliases.json`, 또는 `<repo>/.pi/teams/aliases.json`
 - 시작 제외 목록: `~/.pi/agent/teams/start-ignore`, 또는 `<repo>/.pi/teams/start-ignore`(gitignore 문법)
 
+### preset 구조
+
+기본 preset은 저장소의 [`presets.default.json`](presets.default.json)에 있습니다. 파일은 세 부분으로 이루어집니다.
+
+- **`models`:** 모델 별칭입니다. 예: `"opus": "anthropic/claude-opus-5-5"`, `"sol": "openai-codex/gpt-6.2-sol"`. 새 모델이 나오면 이 줄만 바꾸면 그 별칭을 쓰는 모든 preset에 반영됩니다.
+- **`presets.base`:** 모든 역할(스킬, MCP, 프롬프트 등)을 한 번만 정의하는 추상 preset입니다. 역할의 `models`에는 실제 모델 대신 슬롯 이름(`@lead`, `@build`, `@deep`, `@scout`, `@vision`, `@write`, `@image`)을 적습니다.
+- **나머지 preset:** `extends`로 상속하고, 슬롯(`slots`)과 바뀌는 역할(`roles`)만 적습니다. 역할에 `null`을 주면 그 역할을 뺍니다. 후보는 `별칭:사고수준`(예: `opus:high`)이나 `provider/model:사고수준`으로 적습니다.
+
+| preset | 팀장(orchestrator) | 구성원 | 용도 |
+|---|---|---|---|
+| `mix` | opus:high → sol:xhigh | Codex 우선, Claude 예비 | 두 계정을 고루 쓸 때 |
+| `advanced` | fable:high → opus:high | `mix`와 같음 | 더 강한 팀장이 필요할 때 |
+| `claude` | opus:high | sonnet·opus·haiku, image 역할 없음 | Claude 계정만 쓸 때(macbook 등) |
+| `claude-advanced` | fable:xhigh → opus:xhigh | opus·sonnet, image 역할 없음 | Claude만 쓰면서 더 강한 팀이 필요할 때 |
+| `codex` | sol:xhigh → astra:high | sol 중심, luna 정찰 | Codex 계정만 쓸 때 |
+| `codex-advanced` | astra:xhigh → sol:xhigh | astra 중심 | Codex만 쓰면서 더 강한 팀이 필요할 때 |
+
+호스트 파일과 저장소 파일은 `"version": 2`를 적고, 바꿀 부분만 씁니다. `models`는 별칭 단위로, 같은 이름의 preset은 슬롯과 역할 단위로 아래 층에 합쳐집니다.
+
+```json
+{
+  "version": 2,
+  "models": { "opus": "anthropic/claude-opus-6" },
+  "presets": {
+    "claude": { "slots": { "lead": ["fable:high", "opus:high"] } },
+    "game": { "extends": "mix", "description": "Game work", "roles": { "modeler": null, "task": { "max": 5 } } }
+  }
+}
+```
+
+`version`이 없는 예전 형식(`{ "<preset>": { "<role>": {...} } }`)도 읽지만, 그 preset은 같은 이름의 기본 preset을 통째로 대체합니다. 그래서 별칭 변경이 반영되지 않습니다. 잘못된 preset이 하나 있어도 그 preset만 빠지고 나머지는 동작하며, 이유는 `/team preset show`에 나옵니다.
+
+팀을 시작할 때 preset의 첫 후보에 로그인되어 있지 않은 역할이 있으면 경고합니다. 예를 들어 Claude만 로그인된 호스트에서 `mix`를 고르면 이 경고가 나오며, 이때는 `claude` preset을 쓰는 편이 맞습니다.
+
+### 메인 모드
+
+`/team main <preset>`은 메인 세션을 그 preset의 팀장처럼 씁니다.
+
+- **모델 고정:** orchestrator 후보 가운데 로그인되어 있고 cooldown 중이 아닌 첫 실제 모델로 메인 모델을 바꾸고 사고 수준도 맞춥니다. virtual model이 아니므로 사고 수준 변경, pi의 캐시 데우기, prompt cache가 평소처럼 동작합니다.
+- **역할 위임:** 그 preset의 역할이 `pi-team.<role>` agent로 등록됩니다(예: `pi-team.task`, `pi-team.scout`). 메인 모델은 `subagent`로 이 agent에 위임하고, 자식은 `team/<preset>.<role>` 후보 순서대로 모델을 고릅니다. 파일을 쓰는 역할도 쓸 수 있으며, 팀과 달리 별도 worktree 없이 현재 저장소에서 작업합니다.
+- **실패 시 확인:** 메인 모델의 요청이 재시도 뒤에도 실패하면, 다음 orchestrator 후보로 바꿀지 묻습니다. 바꾸면 prompt cache를 잃어 다음 요청에서 대화 전체를 다시 보낸다는 점도 함께 알립니다. 사용 한도·속도 제한·과부하·인증 오류는 cooldown에 기록되어 팀에도 반영됩니다.
+- **세션 단위:** 설정은 세션에 저장되어 재개해도 유지됩니다. `/team main <preset> --default`는 이 호스트의 새 세션에 자동으로 적용하며, `--model`로 시작한 세션에는 적용하지 않습니다.
+- **팀 전용 agent 차단:** `pi-team.<preset>-<role>` 형태의 agent는 팀 안에서만 실행되므로 메인 세션에서 호출하면 막고 `pi-team.<role>`을 안내합니다.
+- **팀장 모델 비노출:** 메인 세션의 `/model` 목록에는 `team/<preset>.orchestrator`가 나오지 않습니다. virtual model을 메인 모델로 쓰면 사고 수준이 무시되고 캐시 데우기가 꺼지며, 일반 서브에이전트가 모델을 찾지 못하기 때문입니다.
+
 ### 역할 설정
 
-역할마다 `models`(fallback 순서) 외에 다음 속성을 쓸 수 있습니다.
+역할마다 `models`(fallback 순서, 슬롯 이름 가능) 외에 다음 속성을 쓸 수 있습니다.
 
 | 속성 | 뜻 |
 |---|---|
@@ -61,7 +109,7 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 
 ```json
 "modeler": {
-  "models": ["openai-codex/gpt-6.2-sol:high", "anthropic/claude-opus-5-5:high"],
+  "models": ["@deep"],
   "description": "3D work in its own headless Blender",
   "skills": ["text-to-blender", "blender-modeling", "blender-uv-texturing"],
   "mcp": ["blender"]
