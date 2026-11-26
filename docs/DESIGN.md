@@ -117,6 +117,7 @@ flowchart TB
 - router는 요청마다 자기 범위의 파일을 읽습니다. 팀장과 구성원은 `PI_TEAM_ID`, 메인 모드에서 위임한 자식은 메인 세션이 설정한 `PI_TEAM_MAIN_KEY`로 범위를 정합니다. 그래서 이미 실행 중인 구성원도 다음 요청부터 바뀐 값을 씁니다.
 - 모델 조정은 후보 맨 앞에 붙고, 같은 모델의 기존 후보는 빠집니다. effort 조정은 고른 후보의 수준을 대신합니다.
 - 팀장은 처음 시작할 때 첫 후보의 effort로 thinking 수준을 맞추고, 그 값을 세션 항목 `pi-team-lead-level`에 남깁니다(재개도 `startup`으로 시작하므로 덮어쓰지 않기 위해서입니다). 사용자가 `shift+tab`이나 `/team effort orchestrator`로 다른 수준을 고르면 router가 그 값을 따릅니다. 우선순위는 팀장 세션의 선택, 파일 조정, 후보의 수준 순입니다.
+- `/team routes`는 대화형 화면에서 `routes-view.ts` overlay를 엽니다. 대상은 팀장 세션이면 자기 팀, 메인 세션이면 메인 모드 preset과 실행 중인 팀들입니다(`tab`으로 전환). 행마다 `routeRows()`가 계산한 NEXT(고른 후보와 효과 수준), FALLBACK(나머지 후보와 로그인·cooldown 상태), RUNNING(살아 있는 구성원의 실제 모델·수준)을 보여 줍니다. `←→`는 `levels` 순서로 한 단계씩 바꾸고, `m`은 overlay를 닫고 pi 선택창으로 로그인된 모델(역할 후보와 별칭)을 고른 뒤 같은 행으로 돌아옵니다. 명령과 TUI는 같은 `applyEffort`·`applyModel`을 씁니다.
 - 구성원 기록(`lead.json`, `members/*.json`)에 실제 실행된 수준(`level`)을 남겨, 패널과 board의 모델 칸에 `opus-5-5·high`처럼 표시합니다. 패널의 모델 칸은 17칸입니다.
 
 ### 메인 모드(`main.ts`)

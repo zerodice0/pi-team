@@ -12,6 +12,7 @@
 
 - **역할 → 모델 preset:** 각 역할은 virtual model(`team/<preset>.<role>`)로 등록되며, fallback 체인과 cooldown을 따라 모델을 고릅니다. preset은 상속 구조이므로, 새 모델이 나오면 모델 별칭 한 줄만 바꿉니다. 기본 preset은 `mix`, `advanced`, `claude`, `claude-advanced`, `codex`, `codex-advanced`입니다.
 - **메인 모드(`/team main <preset>`):** 메인 세션이 preset의 orchestrator 모델로 실행되고, 역할별 agent(`pi-team.<role>`)에게 바로 위임합니다.
+- **서브에이전트 들여다보기:** 팀장 화면 아래의 pi-subagents FleetView에서, 입력창이 비어 있을 때 `↓`나 `←`를 누르면 실행 중인 구성원 목록이 열립니다. `/subagents-fleet`은 구성원의 대화·도구 기록을 실시간으로 보고, `s`로 지시를 보내고, `D`로 멈출 수 있는 inspector입니다. Herdr 안에서는 `H`로 구성원 대시보드를 옆 pane에 엽니다.
 - **팀 안 메시징:** 팀원끼리 파일 mailbox로 메시지를 주고받고, `replyTo`로 스레드를 잇습니다. 다른 팀과는 팀장끼리만 주고받습니다.
 - **`/team board`:** 모든 팀의 목표, 각 worktree, 구성원별 실제 모델·상태·현재 도구, 메시지와 요약을 보여 주는 overlay입니다. widget도 함께 표시합니다.
 - **팀 패널(`ctrl+shift+t`·`alt+t`):** 대화를 계속하면서 볼 수 있도록 화면 오른쪽에 떠 있는 패널입니다. 팀마다 진행 요약, 목표, 메인이 마지막으로 보낸 위임, 팀장과 팀원이 지금 하는 일과 모델, 마지막 메시지를 보여 줍니다. fullscreen 모드(pi 기본값)에서는 제목 줄을 마우스로 끌어 옮길 수 있고, 옮긴 위치는 기억합니다.
@@ -44,7 +45,7 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 | `/team collect <team>` | 팀 요약을 메인 세션으로 가져옵니다. 모델은 실행하지 않습니다. |
 | `/team close <team> [--confirm-unmerged]` | worktree를 정리합니다. 병합되지 않은 branch는 지우지 않습니다. |
 | `/team main [<preset>\|off] [--default]` | 메인 모드를 켜거나 끄고, 인자가 없으면 상태를 보여 줍니다. `--default`는 이 호스트의 새 세션에 적용할 기본값을 저장하거나 지웁니다. |
-| `/team routes [--team <id>]` | 역할마다 지금 요청이 갈 모델과 effort(`▸`), 예비 후보, 임시 조정 여부, 팀장의 현재 모델을 보여 줍니다. 팀장 세션에서는 자기 팀, 메인 세션에서는 `--team`으로 지정한 팀이나 메인 모드 preset이 대상입니다. |
+| `/team routes [--team <id>] [--text]` | 라우터 설정 화면을 엽니다. 역할마다 다음 요청이 갈 모델·effort(NEXT), 예비 후보(FALLBACK), 지금 실행 중인 구성원의 모델(RUNNING)을 보여 주고, 임시 조정한 역할은 주황색입니다. `↑↓` 역할, `←→` effort 한 단계, `m` 모델 고르기(이 호스트에서 로그인된 모델만), `r` 역할 되돌리기, `R` 전체 되돌리기, `tab` 대상 전환(메인 모드와 팀들), `esc` 닫기입니다. 바꾼 값은 바로 저장되어 다음 요청부터 적용됩니다. `--text`나 print 모드에서는 표를 출력합니다. |
 | `/team effort <role\|all> <level\|reset> [--team <id>]` | 역할의 effort(thinking 수준)를 임시로 바꿉니다. preset 파일은 바꾸지 않으며 다음 요청부터 적용됩니다. 팀장 세션의 `orchestrator`와 메인 모드의 `orchestrator`는 그 세션의 thinking 수준 자체를 바꿉니다. |
 | `/team model <role\|all> <provider/model[:level] 또는 별칭[:level]\|reset> [--team <id>]` | 역할이 가장 먼저 시도할 모델을 임시로 지정합니다(예: `opus:high`). 원래 후보는 그 뒤의 예비로 남습니다. 메인 모드의 `orchestrator`는 메인 모델을 바로 바꿉니다. |
 | `/team preset show [preset]` · `/team alias show` | preset(설명, 후보별 로그인·cooldown 상태, 잘못된 preset의 이유)과 별칭을 보여 줍니다. |

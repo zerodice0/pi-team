@@ -14,7 +14,8 @@ import { herdrStatus } from './herdr-status.ts';
 import { participant, type ParticipantRuntime } from './participant.ts';
 import { authGaps, candidates, childEntry, generateAgents, imageDisabled, presetCatalog, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
 import { mainMode } from './main.ts';
-import { routeCommand, teamTarget } from './routing.ts';
+import { routeCommand, teamTarget, type RouteTarget } from './routing.ts';
+import { routesView } from './routes-view.ts';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import { skillCatalog, skillSize } from './skills.ts';
 import { backfillStats, loadStats, retroAsk, retroReport, roleSkills, statsReport, trackRun, writeRetro } from './stats.ts';
@@ -310,7 +311,19 @@ export default async function piTeam(pi: ExtensionAPI) {
           if (!t) throw new Error('Name a team with --team <id>, or turn on main mode with /team main <preset>.');
           return { ...t, current: main!.current(ctx) };
         };
-        return show(ctx, await routeCommand(pi, ctx, verb, args, target, leadLevelRef));
+        // Interactive /team routes opens the overlay; --text (or print mode) prints the table.
+        if (verb === 'routes' && ctx.hasUI && !/(?:^|\s)--text(?:\s|$)/.test(args)) {
+          const want = /--team\s+(\S+)/.exec(args)?.[1];
+          const list = (): RouteTarget[] => {
+            if (team) return [teamTarget(team.id, true)];
+            const own = main?.target(configCwd);
+            const ids = teams().map(t => t.id).sort((a, b) => Number(b === want) - Number(a === want));
+            return [...(own && !want ? [{ ...own, current: main!.current(ctx) }] : []), ...ids.map(id => teamTarget(id)), ...(own && want ? [{ ...own, current: main!.current(ctx) }] : [])];
+          };
+          await routesView(pi, ctx, list, leadLevelRef);
+          return;
+        }
+        return show(ctx, await routeCommand(pi, ctx, verb, args.replace(/(?:^|\s)--text(?=\s|$)/, ' '), target, leadLevelRef));
       }
       if (verb === 'title') {
         // A lead retitles its own team; the main session names the team first.
