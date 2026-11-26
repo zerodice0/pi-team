@@ -45,8 +45,8 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 | `/team collect <team>` | 팀 요약을 메인 세션으로 가져옵니다. 모델은 실행하지 않습니다. |
 | `/team close <team> [--confirm-unmerged]` | worktree를 정리합니다. 병합되지 않은 branch는 지우지 않습니다. |
 | `/team main [<preset>\|off] [--default]` | 메인 모드를 켜거나 끄고, 인자가 없으면 상태를 보여 줍니다. `--default`는 이 호스트의 새 세션에 적용할 기본값을 저장하거나 지웁니다. |
-| `/team routes [--team <id>] [--text]` | 라우터 설정 화면을 엽니다. 역할마다 다음 요청이 갈 모델·effort(NEXT), 예비 후보(FALLBACK), 지금 실행 중인 구성원의 모델(RUNNING)을 보여 주고, 임시 조정한 역할은 주황색입니다. `↑↓` 역할, `←→` effort 한 단계, `m` 모델 고르기(이 호스트에서 로그인된 모델만), `r` 역할 되돌리기, `R` 전체 되돌리기, `tab` 대상 전환(메인 모드와 팀들), `esc` 닫기입니다. 바꾼 값은 바로 저장되어 다음 요청부터 적용됩니다. `--text`나 print 모드에서는 표를 출력합니다. |
-| `/team effort <role\|all> <level\|reset> [--team <id>]` | 역할의 effort(thinking 수준)를 임시로 바꿉니다. preset 파일은 바꾸지 않으며 다음 요청부터 적용됩니다. 팀장 세션의 `orchestrator`와 메인 모드의 `orchestrator`는 그 세션의 thinking 수준 자체를 바꿉니다. |
+| `/team routes [--team <id>] [--text]` | 라우터 설정 화면을 엽니다. 역할마다 다음 요청이 갈 모델·effort(NEXT), 예비 후보(FALLBACK), 지금 실행 중인 구성원의 모델(RUNNING)을 보여 주고, 임시 조정한 역할은 주황색입니다. `↑↓` 역할, `←→` effort 한 단계, `m` 모델 고르기(이 호스트에서 로그인된 모델만), `r` 역할 되돌리기, `R` 전체 되돌리기, `tab` 대상 전환(메인 모드와 팀들), `esc` 닫기입니다. 바꾼 값은 바로 저장되어 다음 요청부터 적용됩니다. 팀장처럼 구성원 알림과 우편으로 턴이 이어지는 중이어도, 바꾼 뒤 첫 요청에서 새 모델로 옮깁니다(이때 프롬프트 캐시를 한 번 새로 씁니다). 팀장이 아직 새 설정으로 요청하지 않았으면 팀 패널과 board는 팀장 모델 자리에 `→ opus-5-5·medium`처럼 다음 모델을 주황색으로 보여 줍니다. `--text`나 print 모드에서는 표를 출력합니다. |
+| `/team effort <role\|all> <level\|reset> [--team <id>]` | 역할의 effort(thinking 수준)를 임시로 바꿉니다. preset 파일은 바꾸지 않으며 다음 요청부터 적용됩니다. 팀장 세션의 `orchestrator`와 메인 모드의 `orchestrator`는 그 세션의 thinking 수준 자체를 바꾸며, 팀장 세션에서는 같은 값을 팀 override에도 저장합니다. |
 | `/team model <role\|all> <provider/model[:level] 또는 별칭[:level]\|reset> [--team <id>]` | 역할이 가장 먼저 시도할 모델을 임시로 지정합니다(예: `opus:high`). 원래 후보는 그 뒤의 예비로 남습니다. 메인 모드의 `orchestrator`는 메인 모델을 바로 바꿉니다. |
 | `/team preset show [preset]` · `/team alias show` | preset(설명, 후보별 로그인·cooldown 상태, 잘못된 preset의 이유)과 별칭을 보여 줍니다. |
 

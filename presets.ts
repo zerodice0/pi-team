@@ -270,6 +270,8 @@ export function candidates(models: string[], registry: ExtensionContext["modelRe
     return model && registry.hasConfiguredAuth(model) ? [{ key: c.key, level: c.level, index, model, until: cd[c.key]?.until ?? 0 }] : [];
   });
 }
+interface RouteState { override?: string }
+const overrideKey = (o?: { model?: string; level?: string }) => o?.model || o?.level ? `${o.model ?? ''}|${o.level ?? ''}` : '';
 // leadLevel: in a lead, the thinking level pi selected at start. When the user picks another one
 // (shift+tab, /thinking), the orchestrator follows it instead of the candidate's level.
 export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (model: string, fallback: boolean, level: ThinkingLevel) => void, options: { skipOrchestrator?: boolean; leadLevel?: () => ThinkingLevel | undefined } = {}) {
@@ -279,7 +281,7 @@ export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (mo
     // picking it as the main model, which ignores the thinking level and loses cache warming.
     if (options.skipOrchestrator && role === 'orchestrator') continue;
     const id = `${preset}.${role}`;
-    pi.registerVirtualModel({ provider: 'team', id, name: `Team ${id}`, thinkingLevels: [...levels], route(request, ctx) {
+    pi.registerVirtualModel<RouteState>({ provider: 'team', id, name: `Team ${id}`, thinkingLevels: [...levels], route(request, ctx) {
       const disabled = role === 'image' && imageDisabled();
       if (disabled) throw new Error(`Image role disabled: ${disabled}`);
       const now = Date.now();
@@ -288,8 +290,13 @@ export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (mo
       const override = readOverrides(ambientScope())[role];
       const available = candidates(effectiveModels(item, override), ctx.modelRegistry).filter(c => !(failed && failed.id === c.model.id && failed.provider === c.model.provider));
       // Within a turn (tool follow-ups, compaction) stay on the model that answered last: switching
-      // there drops the prompt cache. A new user turn or a retry chooses again.
-      const previous = (request.reason === 'continuation' || request.reason === 'direct') ? request.previous?.model : undefined;
+      // there drops the prompt cache. A new user turn or a retry chooses again, and so does the first
+      // request after the role's override changed. A lead runs on mail and subagent notices, which
+      // are continuations, so without that it could keep the old model until the user writes.
+      // The router state remembers which override the session last routed with.
+      const routed = overrideKey(override);
+      const changed = request.reason !== 'direct' && (request.state?.override ?? '') !== routed;
+      const previous = !changed && (request.reason === 'continuation' || request.reason === 'direct') ? request.previous?.model : undefined;
       let choice = (previous && available.find(c => c.model.id === previous.id && c.model.provider === previous.provider)) || available.find(c => c.until <= now);
       if (!choice) {
         choice = available.reduce<(typeof available)[number] | undefined>((best, c) => !best || c.until < best.until ? c : best, undefined);
@@ -300,7 +307,7 @@ export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (mo
       const base = role === 'orchestrator' ? options.leadLevel?.() : undefined;
       const level = base && request.thinkingLevel && request.thinkingLevel !== base ? request.thinkingLevel : override?.level ?? choice.level;
       if (request.reason !== 'direct') onRoute?.(choice.key, choice.index !== 0, level);
-      return { model: choice.model, thinkingLevel: level };
+      return { model: choice.model, thinkingLevel: level, ...(changed ? { state: { override: routed } } : {}) };
     } });
   }
 }

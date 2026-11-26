@@ -90,6 +90,8 @@ export interface Participant {
   startedAt?: number; waitSince?: number;
   state: 'idle' | 'working' | 'waiting' | 'done' | 'failed' | 'stopped';
   model?: string; level?: string; fallback?: boolean; tool?: string; path?: string; tokens: number; sideEffects: boolean;
+  // When the router last chose a model for this participant.
+  routedAt?: number;
   result?: string; error?: string; diff?: string; changedPaths?: string[];
 }
 export interface FleetEntry { key: string; agent: string; model?: string; startedAt?: number; tokens?: { total?: number } }

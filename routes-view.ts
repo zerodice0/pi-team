@@ -30,7 +30,7 @@ export async function routesView(pi: ExtensionAPI, ctx: ExtensionContext, target
       const refresh = () => {
         list = targets();
         if (!list.length) return;
-        rows = routeRows(target(), ctx.modelRegistry, pi.getThinkingLevel());
+        rows = routeRows(target(), ctx.modelRegistry, pi.getThinkingLevel(), leadLevel);
         selected = Math.max(0, Math.min(selected, rows.length - 1));
       };
       const say = (text: string, tone: Tone = 'label') => { note = text; noteTone = tone; };
@@ -95,7 +95,7 @@ export async function routesView(pi: ExtensionAPI, ctx: ExtensionContext, target
           }
           else if (r && key === 'm') { done({ pick: { role: r.role, target: ti, selected } }); return; }
           else if (r && key === 'r') act(() => { applyEffort(pi, t, r.role, null, leadLevel); return r.role === 'orchestrator' && t.self === 'main' ? `${r.role}: effort reset (use m to change the main model)` : (setOverride(t.scope, r.role, null), `${r.role}: reset to the preset`); });
-          else if (key === 'R') act(() => { for (const x of rows) { if (x.role === 'orchestrator' && t.self) applyEffort(pi, t, x.role, null, leadLevel); else setOverride(t.scope, x.role, null); } return 'all roles reset to the preset'; });
+          else if (key === 'R') act(() => { for (const x of rows) { if (x.role === 'orchestrator' && t.self) applyEffort(pi, t, x.role, null, leadLevel); if (x.role !== 'orchestrator' || t.self !== 'main') setOverride(t.scope, x.role, null); } return 'all roles reset to the preset'; });
           tui.requestRender();
         },
         invalidate() {},
@@ -106,7 +106,7 @@ export async function routesView(pi: ExtensionAPI, ctx: ExtensionContext, target
     const t = targets()[exit.pick.target];
     if (!t) return;
     const role = exit.pick.role;
-    const level = routeRows(t, ctx.modelRegistry, pi.getThinkingLevel()).find(r => r.role === role)?.level ?? 'medium';
+    const level = routeRows(t, ctx.modelRegistry, pi.getThinkingLevel(), leadLevel).find(r => r.role === role)?.level ?? 'medium';
     const aliases = Object.entries(presetCatalog(t.cwd).models);
     const options = [...new Set([...t.roles[role].models.map(c => c.replace(/:[a-z]+$/, '')), ...aliases.map(([, id]) => id)])]
       .filter(id => { const [p, ...rest] = id.split('/'); const m = ctx.modelRegistry.find(p, rest.join('/')); return m && ctx.modelRegistry.hasConfiguredAuth(m); });

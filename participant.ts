@@ -37,7 +37,7 @@ export function participant(pi: ExtensionAPI, team: Team, role: () => string | u
   };
   const routed = (model: string, didFallback: boolean, level?: string) => {
     lastModel = model; lastLevel = level; fallback = didFallback;
-    if (row) { row.model = model; row.level = level; row.fallback = didFallback; persist(); }
+    if (row) { row.model = model; row.level = level; row.fallback = didFallback; row.routedAt = Date.now(); persist(); }
   };
   const diff = () => {
     if (!row || !lead) return;

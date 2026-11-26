@@ -4,7 +4,9 @@ import { join } from 'node:path';
 import { send, type Address } from './mailbox.ts';
 import { findSummary, threads } from './lifecycle.ts';
 import { activity, BG, BG_OFF, diffShort, edge, fg, glyph, headline, modelName, oneLine, pad, row, short, wrap, type Info, type Line, type Segment, type Tone } from './frame.ts';
-import { clipText, getLead, goalDetail, leadState, ledger, members, readJson, teamDir, teamIcon, teams, teamTitle, type LedgerEntry, type Snapshot, type Team } from './registry.ts';
+import { clipText, getLead, goalDetail, leadState, ledger, members, readJson, teamDir, teamIcon, teams, teamTitle, type LedgerEntry, type Participant, type Snapshot, type Team } from './registry.ts';
+import { statSync } from 'node:fs';
+import { readOverrides, scopePath } from './overrides.ts';
 
 // Surfaces show the title; the ID, preset and alias appear only where an address is needed (board).
 export const teamLabel = (t: Team) => `${teamIcon(t)} ${teamTitle(t)}`;
@@ -30,7 +32,20 @@ export function status(t: Team) {
     if (registered && Math.abs((registered.startedAt ?? 0) - (entry.startedAt ?? 0)) <= 30_000) matched.add(registered.key);
     else pending.push({ role, ...entry });
   }
-  return { team: t, state: leadState(lead, t.createdAt), lead, rows, events, sent, diff: lead?.diff ?? 'not yet recorded', pending };
+  return { team: t, state: leadState(lead, t.createdAt), lead, rows, events, sent, diff: lead?.diff ?? 'not yet recorded', pending, leadNext: leadNext(t.id, lead) };
+}
+// lead.json names the model that answered last. After /team routes or /team model changes the
+// orchestrator, show where its next request goes until the lead has routed one there. Only a change
+// made after the lead's last route counts, so a fallback or a shift+tab level is not shown as pending.
+function leadNext(team: string, lead?: Participant) {
+  const o = readOverrides({ team })['orchestrator'];
+  if (!lead || !o) return undefined;
+  let changedAt = 0;
+  try { changedAt = statSync(scopePath({ team })).mtimeMs; } catch { return undefined; }
+  if ((lead.routedAt ?? 0) >= changedAt) return undefined;
+  const model = o.model?.replace(/:[a-z]+$/, '') ?? lead.model;
+  const level = o.level ?? o.model?.split(':').pop() ?? lead.level;
+  return model === lead.model && level === lead.level ? undefined : modelName(model, level);
 }
 const views = ['Teams', 'Team', 'Messages', 'Summary'] as const;
 const home = process.env.HOME ?? '';
@@ -67,7 +82,7 @@ function roster(d: Info, inner: number): Line[] {
   };
   type Row = { role: string; key: string; model: string; fallback?: boolean; state: string; now: string; mail: string; tokens: string };
   const people: Row[] = [
-    ...(d.lead ? [{ role: 'lead', key: 'lead', model: modelName(d.lead.model, d.lead.level), fallback: d.lead.fallback, state: d.state, now: activity(d.lead, d.state), mail: mail('lead'), tokens: d.lead.tokens.toLocaleString('en-US') }] : []),
+    ...(d.lead ? [{ role: 'lead', key: 'lead', model: d.leadNext ? `→ ${d.leadNext}` : modelName(d.lead.model, d.lead.level), fallback: d.lead.fallback || !!d.leadNext, state: d.state, now: activity(d.lead, d.state), mail: mail('lead'), tokens: d.lead.tokens.toLocaleString('en-US') }] : []),
     ...d.rows.map(p => ({ role: p.role, key: p.key, model: modelName(p.model, p.level), fallback: p.fallback, state: p.state, now: activity(p, p.state), mail: mail(p.key), tokens: p.tokens.toLocaleString('en-US') })),
     ...d.pending.map(p => ({ role: p.role, key: p.key, model: modelName(p.model), state: 'starting', now: 'starting', mail: '0/0', tokens: (p.tokens?.total ?? 0).toLocaleString('en-US') })),
   ];

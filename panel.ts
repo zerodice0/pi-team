@@ -26,13 +26,14 @@ const REFRESH_MS = 2000;
 const positionFile = join(root, 'panel.json');
 const KEY = 10;
 const MODEL = 17;
-function memberLine(p: { key: string; model?: string; level?: string; fallback?: boolean; tool?: string; path?: string; error?: string }, state: string): Line {
+function memberLine(p: { key: string; model?: string; level?: string; fallback?: boolean; next?: string; tool?: string; path?: string; error?: string }, state: string): Line {
   const [mark, tone] = glyph[state] ?? ['?', 'label'];
   const busy = state === 'working' || state === 'waiting';
   return {
     left: [['    '], [mark, tone], [' '], [clip(p.key, KEY).padEnd(KEY), 'name'], [' '], [activity(p, state), busy ? 'name' : 'label']],
-    // A fallback model is shown in amber rather than with an extra glyph.
-    right: [[clip(modelName(p.model, p.level), MODEL), p.fallback ? 'warn' : 'label']],
+    // A fallback model is shown in amber rather than with an extra glyph, and so is a lead's routing
+    // change that its next request will pick up.
+    right: [[clip(p.next ? `→ ${p.next}` : modelName(p.model, p.level), MODEL), p.fallback || p.next ? 'warn' : 'label']],
   };
 }
 export function teamLines(d: Info, inner: number): Line[] {
@@ -48,7 +49,7 @@ export function teamLines(d: Info, inner: number): Line[] {
   const followUp = d.sent.filter(e => e.from === 'main' && e.to === `lead@${d.team.id}`).at(-1);
   if (followUp?.body) lines.push({ left: [['  + ', 'dim'], [oneLine(followUp.body), 'label']] });
   const people: { p: Parameters<typeof memberLine>[0]; state: string }[] = [
-    ...(d.lead ? [{ p: { ...d.lead, key: 'lead' }, state: d.state }] : []),
+    ...(d.lead ? [{ p: { ...d.lead, key: 'lead', next: d.leadNext }, state: d.state }] : []),
     ...rows.filter(p => live.has(p.state)).map(p => ({ p, state: p.state })),
     ...d.pending.map(p => ({ p: { key: p.role, model: p.model }, state: 'starting' })),
   ];

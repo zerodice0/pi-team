@@ -5,7 +5,8 @@ import { candidates, readPresets, type Role } from './presets.ts';
 import { getLead, getTeam, isLive, members, teamTitle } from './registry.ts';
 
 // Where /team effort, /team model and /team routes act:
-//  - lead: its own team; the orchestrator's effort is pi's own thinking level (shift+tab works too)
+//  - lead: its own team; the orchestrator's effort is pi's own thinking level (shift+tab works too),
+//    also saved as the override so the router keeps it even when it equals the starting level
 //  - main session with --team <id>: that team, through its overrides file
 //  - main session in main mode: the main preset; the orchestrator is the main model itself
 export interface RouteTarget {
@@ -29,6 +30,10 @@ export function applyEffort(pi: ExtensionAPI, t: RouteTarget, role: string, leve
   if (role === 'orchestrator' && t.self) {
     const next = level ?? (t.self === 'lead' ? leadLevel?.() : undefined) ?? firstLevel(item);
     pi.setThinkingLevel(next);
+    // The lead's router only follows pi's level when it differs from the level the lead started at;
+    // otherwise the override, then the candidate's own level, decide. Without saving the level here,
+    // going back to the starting level under a model override such as opus:medium kept medium.
+    if (t.self === 'lead') setOverride(t.scope, role, { level: level ?? undefined });
     return `orchestrator: thinking ${next} for this session`;
   }
   setOverride(t.scope, role, { level: level ?? undefined });
@@ -56,7 +61,7 @@ export interface RouteRow {
   steps: { key: string; level: string; usable: boolean; cooling: boolean; chosen: boolean }[];
   running: string[];
 }
-export function routeRows(t: RouteTarget, registry: ExtensionContext['modelRegistry'], thinking?: ThinkingLevel): RouteRow[] {
+export function routeRows(t: RouteTarget, registry: ExtensionContext['modelRegistry'], thinking?: ThinkingLevel, leadLevel?: () => ThinkingLevel | undefined): RouteRow[] {
   const overrides = readOverrides(t.scope);
   const now = Date.now();
   const team = 'team' in t.scope ? t.scope.team : undefined;
@@ -70,7 +75,10 @@ export function routeRows(t: RouteTarget, registry: ExtensionContext['modelRegis
       const state = ready.find(r => r.index === i);
       return { key: c.replace(/:[a-z]+$/, ''), level: o?.level ?? levelOf(c), usable: !!state, cooling: !!state && state.until > now, chosen: !!state && state === pick };
     });
-    const selfLevel = role === 'orchestrator' && t.self ? thinking : undefined;
+    // Mirror the router: the main model runs at pi's level; a lead follows pi's level only when it
+    // differs from the level the lead started at (see registerModels).
+    const base = t.self === 'lead' ? leadLevel?.() : undefined;
+    const selfLevel = role !== 'orchestrator' || !t.self ? undefined : t.self === 'main' || (base && thinking && thinking !== base) ? thinking : undefined;
     const level = (selfLevel ?? o?.level ?? (pick ? levelOf(chain[pick.index]) : levelOf(chain[0]))) as ThinkingLevel;
     const running = role === 'orchestrator' ? (t.current?.model ? [`${t.current.model}${t.current.level ? `:${t.current.level}` : ''}`] : [])
       : live.filter(m => m.role === role).map(m => `${m.model ?? '?'}${m.level ? `:${m.level}` : ''}`);
