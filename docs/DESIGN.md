@@ -131,7 +131,7 @@ flowchart TB
 
 1. `/team start <preset> [--title 제목] [--name N] [--base REF] [--from-dirty] -- <목표>`, 또는 메인 모델의 `team_start`(`title`, `name`).
    - **팀 ID와 제목:** ID는 branch, worktree, 메일 주소에 쓰이므로 ASCII로 두고 바꾸지 않습니다. `name`은 소문자와 하이픈으로 정리해 ID로 쓰고(최대 32자), 이미 쓰인 ID면 `-2`, `-3`을 붙입니다. `name`이 없으면 별칭 키, 그것도 없으면 `<preset>-<8자리 hex>`입니다. 사람이 읽는 제목은 `title`(60자까지, 어떤 언어든 가능)이며, 없으면 목표의 첫 문장(`## 목표` 같은 제목 줄과 「목표:」 머리말은 건너뜀)을 48칸으로 자른 값, 그것도 없으면 ID를 씁니다. 도구 설명은 메인 모델에게 새 팀마다 `title`과 `name`을 주라고 안내합니다.
-   - `/team title <team> <제목>`(팀장 세션에서는 `/team title <제목>`)은 `team.json`의 `title`만 바꾸고, Herdr workspace 이름도 `herdr workspace rename`으로 바꿉니다.
+   - `/team title <team> <제목>`(팀장 세션에서는 `/team title <제목>`)은 `team.json`의 `title`만 바꾸고, Herdr workspace 이름도 `herdr workspace rename`으로 바꿉니다. 터미널 창 제목은 Herdr workspace 이름을 따르므로, 팀장은 시작할 때마다 workspace 이름을 `<아이콘> <제목>`으로 맞춥니다(`syncHerdrLabel`). 제목 기능 이전에 만든 팀도 팀장을 다시 띄우면 맞춰집니다.
 2. 이름을 검증합니다(`[a-z0-9-]{1,32}`, 중복 금지). 미커밋 변경이 있으면 `--from-dirty` 없이는 거부합니다.
    - 추적하지 않는 파일(`??`) 가운데 시작 제외 목록에 맞는 경로는 이 검사에서 건너뜁니다. 목록은 gitignore 문법 파일이며 전역 `~/.pi/agent/teams/start-ignore`와 저장소별 `<repo>/.pi/teams/start-ignore`를 함께 씁니다. 판정은 `git ls-files --others --exclude-standard --directory --exclude-from=<목록>`에 맡깁니다. 도구가 만든 `.gradle/`, `devtools_options.yaml` 같은 파일을 위한 기능입니다.
    - 추적하는 파일의 수정과, 목록에 없는 추적하지 않는 파일(커밋하지 않은 새 소스 등)은 지금처럼 막습니다. 팀은 커밋된 base에서 시작하므로 이런 변경은 팀에 들어가지 않습니다. 거부 오류에는 걸린 경로를 최대 10개 보여 줍니다.

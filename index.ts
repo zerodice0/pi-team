@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { realpathSync } from 'node:fs';
 import { aliasHints, delegate, readTargets, resolveTarget, showAliases, startNamed, type TeamTargets } from './aliases.ts';
 import { board, status, widget } from './board.ts';
-import { closeTeam, findSummary, parseStart, report, retitle, roleList, splitGoal } from './lifecycle.ts';
+import { closeTeam, findSummary, parseStart, report, retitle, roleList, splitGoal, syncHerdrLabel } from './lifecycle.ts';
 import { registerMailbox, send, sendParams } from './mailbox.ts';
 import { teamPanel } from './panel.ts';
 import { herdrStatus } from './herdr-status.ts';
@@ -205,6 +205,7 @@ export default async function piTeam(pi: ExtensionAPI) {
     registerMailbox(pi, lead.owner, lead.update);
     snapshots(pi, team);
     herdrStatus(pi, team);
+    pi.on('session_start', () => { try { syncHerdrLabel(getTeam(team.id) ?? team); } catch { /* display only */ } });
     guardDelegation(pi, team, presets, registerRoleAgents(pi, team, presets));
     if (orchestrator.tools || orchestrator.readOnly) pi.on('session_start', () => {
       const allowed = orchestrator.tools && new Set([...orchestrator.tools, 'subagents_enable', 'subagent', 'team_peers', 'team_send', 'team_inbox', 'team_wait', 'team_report', 'team_skills']);

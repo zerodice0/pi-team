@@ -9,6 +9,14 @@ import { appendLedger, checkIcon, cleanTitle, clipText, defaultIcon, diffStat, e
 export interface Start { preset: string; name?: string; title?: string; base?: string; fromDirty?: boolean; goal: string; icon?: string }
 interface HerdrCreated { workspace: { workspace_id: string }; root_pane: { pane_id: string }; worktree: { path: string } }
 const herdrLabel = (team: Team) => `${team.icon} ${clipText(teamTitle(team), 40)}`;
+// The terminal title follows the Herdr workspace label. A lead brings it in line with the team's
+// title when it starts, so teams made before titles existed, or renamed meanwhile, catch up.
+export function syncHerdrLabel(team: Team) {
+  if (!team.workspace || process.env.HERDR_ENV !== '1') return;
+  const label = herdrLabel(team);
+  const current = herdr<{ workspace?: { label?: string } }>(team.repo, 'workspace', 'get', team.workspace).workspace?.label;
+  if (current !== label) herdr(team.repo, 'workspace', 'rename', team.workspace, label);
+}
 function herdr<T>(cwd: string, ...args: string[]): T {
   const output = exec('herdr', args, cwd);
   const start = output.indexOf('{');

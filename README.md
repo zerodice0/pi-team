@@ -35,7 +35,7 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 | 명령 | 설명 |
 |---|---|
 | `/team start <preset or alias> [--title 제목] [--name X] [--base REF] [--icon 🎨] -- <목표>` | 팀을 만들고 팀장을 띄웁니다. `--title`은 다음 옵션 전까지의 단어를 모두 제목으로 씁니다. `--name`은 팀 ID(영어 한 단어, 소문자·하이픈으로 정리)입니다. |
-| `/team title <team> <제목>` | 팀 제목을 바꿉니다. 팀장 세션에서는 `/team title <제목>`입니다. ID, branch, 주소는 그대로이고 Herdr workspace 이름도 함께 바뀝니다. |
+| `/team title <team> <제목>` | 팀 제목을 바꿉니다. 팀장 세션에서는 `/team title <제목>`입니다. ID, branch, 주소는 그대로이고 Herdr workspace 이름(터미널 창 제목)도 함께 바뀝니다. 팀장은 시작할 때마다 workspace 이름을 제목에 맞춥니다. |
 | `/team delegate <alias> -- <작업>` | 별칭에 해당하는 기존 팀에 작업을 보내고, 팀이 없으면 새로 만듭니다. |
 | `/team stats [role]` · `/team stats import` · `/team stats retro <team>` | 역할별 실행 기록(턴 수, 최대 문맥, 캐시 읽기, 비용)과 스킬 사용(목록에 실렸는지, 실제로 읽혔는지)을 보여 줍니다. `import`는 기록 기능이 생기기 전에 끝난 팀의 세션 파일에서 기록을 만듭니다(`--dry-run` 지원). `retro`는 한 팀의 회고 초안을 보여 줍니다. |
 | `/team board` | 상태판 overlay를 엽니다. 팀 패널과 같은 테두리와 색을 쓰며, 위쪽 테두리의 탭으로 Teams·Team·Messages·Summary를 고릅니다. `↑↓` 선택·스크롤, `PgUp`/`PgDn` 페이지 이동, `enter` 팀 열기, `←→` 다른 팀, `tab`/`shift+tab` 보기 전환, `s` 팀장에게 메시지, `esc` 닫기입니다. |
