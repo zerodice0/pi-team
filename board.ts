@@ -1,9 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { matchesKey, visibleWidth } from '@earendil-works/pi-tui';
+import { Editor, matchesKey, visibleWidth } from '@earendil-works/pi-tui';
 import { join } from 'node:path';
 import { send, type Address } from './mailbox.ts';
 import { findSummary, threads } from './lifecycle.ts';
-import { activity, diffShort, edge, fg, glyph, headline, modelName, oneLine, pad, row, short, wrap, type Info, type Line, type Segment, type Tone } from './frame.ts';
+import { activity, BG, BG_OFF, diffShort, edge, fg, glyph, headline, modelName, oneLine, pad, row, short, wrap, type Info, type Line, type Segment, type Tone } from './frame.ts';
 import { clipText, getLead, goalDetail, leadState, ledger, members, readJson, teamDir, teamIcon, teams, teamTitle, type LedgerEntry, type Snapshot, type Team } from './registry.ts';
 
 // Surfaces show the title; the ID, preset and alias appear only where an address is needed (board).
@@ -123,7 +123,10 @@ function summary(d: Info, inner: number): Line[] {
     return wrap(line.trimEnd(), inner - 2 - indent).map((part, i) => ({ left: [['  '], [i ? `${' '.repeat(indent)}${part}` : part, 'name']] as Segment[] }));
   });
 }
-export async function board(ctx: ExtensionContext, initial?: string, sender?: Address) {
+// Replies are written inside the board so the decisions it shows stay in view while the user answers.
+// Where the reply goes depends on the session: a lead's own team gets it as the user's own message
+// (`own`); any other team's lead gets it through the mailbox.
+export async function board(ctx: ExtensionContext, initial?: string, sender?: Address, own?: (body: string) => void) {
   if (!ctx.hasUI) throw new Error('The team board requires interactive Pi.');
   let data = teams().map(status);
   let selected = Math.max(0, data.findIndex(d => d.team.id === initial));
@@ -132,7 +135,32 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
   let room = 10;
   let timer: NodeJS.Timeout | undefined;
   let refreshError: string | undefined;
-  const chosen = await ctx.ui.custom<string | undefined>((tui, _theme, _keys, done) => {
+  // The team a reply is being written to, and the outcome of the last one.
+  let composing: string | undefined;
+  let note: [string, Tone] | undefined;
+  const target = (id: string) => own && sender?.key === 'lead' && sender.team === id ? 'you' : sender && sender.key !== 'lead' && sender.team === id ? 'lead' : `lead@${id}`;
+  await ctx.ui.custom<void>((tui, _theme, _keys, done) => {
+    const editor = new Editor(tui, {
+      borderColor: text => fg('title', text),
+      selectList: { selectedPrefix: t => fg('title', t), selectedText: t => fg('title', t), description: t => fg('label', t), scrollInfo: t => fg('label', t), noMatch: t => fg('warn', t) },
+    }, { paddingX: 1 });
+    let focused = false;
+    const focus = () => { editor.focused = focused && !!composing; };
+    editor.onSubmit = text => {
+      const body = text.trim();
+      const id = composing;
+      if (!body || !id) return;
+      const to = target(id);
+      try {
+        if (to === 'you') own!(body); else send(sender, { to, body });
+        note = [`Sent to ${to === 'you' ? 'the lead (as your message)' : to}.`, 'good'];
+        editor.addToHistory(body);
+        editor.setText('');
+        composing = undefined;
+        focus();
+      } catch (e) { note = [oneLine(e instanceof Error ? e.message : String(e)), 'crit']; }
+      tui.requestRender();
+    };
     timer = setInterval(() => {
       try {
         const id = data[selected]?.team.id;
@@ -144,6 +172,8 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
       tui.requestRender();
     }, 1800).unref();
     return {
+      get focused() { return focused; },
+      set focused(value: boolean) { focused = value; focus(); },
       render(width: number) {
         const inner = width - 4;
         const d = data[selected];
@@ -154,7 +184,14 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
           return [{ left: [[mark, tone], [' '], [teamLabel(d.team), 'name', true], [`  ${teamIds(d.team)}`, 'label']], right: [[state, summaryTone]] },
             ...(view === 1 ? wrap(goalDetail(d.team), inner - 2, 2).map(text => ({ left: [['  '], [text, 'label']] as Segment[] })) : []), blank];
         })() : [];
-        room = Math.max(3, height - 4 - header.length - (refreshError ? 1 : 0));
+        // The reply box takes the bottom of the frame; the view above keeps scrolling.
+        const box = composing ? editor.render(inner).slice(-Math.max(3, Math.floor(height / 3))) : [];
+        const compose = composing ? [
+          row(blank, width),
+          row({ left: [['Reply to ', 'label'], [target(composing) === 'you' ? 'the lead' : target(composing), 'title', true]], right: [[target(composing) === 'you' ? 'sent as your message' : 'sent through the mailbox', 'label']] }, width),
+          ...box.map(line => `${BG}${fg('border', '│')} ${line}${' '.repeat(Math.max(0, inner - visibleWidth(line)))} ${fg('border', '│')}${BG_OFF}`),
+        ] : note ? [row({ left: [note] }, width)] : [];
+        room = Math.max(3, height - 4 - header.length - (refreshError ? 1 : 0) - compose.length);
         let body: Line[];
         let begin = 0;
         if (!d) body = [{ left: [['  '], ['No teams yet', 'name', true]] }, { left: [['  '], ['/team start <preset or alias> -- <goal>', 'label']] }];
@@ -176,19 +213,30 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
         const tabs = views.map((v, i) => i === view ? fg('title', v, true) : fg('label', v)).join(fg('dim', ' · '));
         const scroll = body.length > room ? fg('label', ` ${begin + 1}–${Math.min(body.length, begin + room)} of ${body.length} `) : '';
         const key = (k: string, what: string) => `${fg('name', k)} ${fg('label', what)}`;
-        const keys = ` ${[view === 0 ? key('↑↓', 'select') : key('↑↓', 'scroll'), view === 0 ? key('enter', 'open') : key('←→', 'team'), key('tab', 'view'), key('s', 'send'), key('esc', 'close')].join(fg('dim', '  '))} `;
+        const keys = composing
+          ? ` ${[key('enter', 'send'), key('shift+enter', 'new line'), key('pgup/pgdn', 'scroll'), key('esc', 'cancel')].join(fg('dim', '  '))} `
+          : ` ${[view === 0 ? key('↑↓', 'select') : key('↑↓', 'scroll'), view === 0 ? key('enter', 'open') : key('←→', 'team'), key('tab', 'view'), key('s', 'reply'), key('esc', 'close')].join(fg('dim', '  '))} `;
         return [
           edge(width, ['╭', '╮'], ` ${fg('title', 'pi-team board', true)} `, ` ${tabs} `),
           row(blank, width),
           ...[...header, ...shown, ...filler].map(line => row(line, width, 0.4)),
           ...(refreshError ? [row({ left: [[oneLine(refreshError), 'crit']] }, width)] : []),
+          ...compose,
           row(blank, width),
           edge(width, ['╰', '╯'], keys, scroll),
         ];
       },
       handleInput(key: string) {
+        if (composing) {
+          if (matchesKey(key, 'escape')) { composing = undefined; editor.setText(''); focus(); }
+          else if (matchesKey(key, 'pageUp')) offset = Math.max(0, offset - room);
+          else if (matchesKey(key, 'pageDown')) offset += room;
+          else editor.handleInput(key);
+          tui.requestRender();
+          return;
+        }
         if (matchesKey(key, 'escape')) { done(undefined); return; }
-        if (key === 's' && data[selected]) { done(data[selected].team.id); return; }
+        if (key === 's' && data[selected]) { composing = data[selected].team.id; note = undefined; focus(); tui.requestRender(); return; }
         const move = (to: number) => { selected = Math.max(0, Math.min(data.length - 1, to)); offset = 0; };
         if (matchesKey(key, 'tab')) { view = (view + 1) % views.length; offset = 0; }
         else if (matchesKey(key, 'shift+tab')) { view = (view + views.length - 1) % views.length; offset = 0; }
@@ -199,16 +247,12 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
         else if (matchesKey(key, 'down')) { if (view === 0) selected = Math.max(0, Math.min(data.length - 1, selected + 1)); else offset++; }
         else if (matchesKey(key, 'pageUp')) offset = Math.max(0, offset - room);
         else if (matchesKey(key, 'pageDown')) offset += room;
+        note = undefined;
         tui.requestRender();
       },
-      invalidate() {},
+      invalidate() { editor.invalidate(); },
     };
   }, { overlay: true, overlayOptions: { width: '94%', minWidth: 60, anchor: 'center' } }).finally(() => clearInterval(timer));
-  if (chosen) {
-    const to = sender && sender.key !== 'lead' && sender.team === chosen ? 'lead' : `lead@${chosen}`;
-    const body = await ctx.ui.editor(`Message to ${to}`);
-    if (body?.trim()) send(sender, { to, body });
-  }
 }
 export function widget(pi: ExtensionAPI) {
   let ctx: ExtensionContext | undefined;

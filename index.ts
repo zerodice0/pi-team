@@ -306,7 +306,12 @@ export default async function piTeam(pi: ExtensionAPI) {
   pi.registerCommand('team', { description: 'Start, inspect, message or close a Pi team', async handler(input, ctx) {
     try {
       const [, verb = '', args = ''] = /^(\S+)(?:\s+([\s\S]*))?$/.exec(input.trim()) ?? [];
-      if (verb === 'board') { try { await board(ctx, team?.id, state?.owner()); } finally { refresh(); } return; }
+      if (verb === 'board') {
+        // In a lead, a reply to its own team is the user's next message to it: steer a running turn.
+        const own = team ? (body: string) => { if (ctx.isIdle()) pi.sendUserMessage(body); else pi.sendUserMessage(body, { deliverAs: 'steer' }); } : undefined;
+        try { await board(ctx, team?.id, state?.owner(), own); } finally { refresh(); }
+        return;
+      }
       if (verb === 'panel') return panel.command(args.trim(), ctx);
       if (verb === 'stats' && /^import(\s+--dry-run)?$/.test(args.trim())) return show(ctx, backfillStats(args.includes('--dry-run')));
       if (verb === 'stats' && /^retro\s+\S+$/.test(args.trim())) return show(ctx, retroReport(args.trim().split(/\s+/)[1]));
