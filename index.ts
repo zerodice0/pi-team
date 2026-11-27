@@ -21,7 +21,7 @@ import { leadCompaction } from './compact.ts';
 import { routeCommand, teamTarget, type RouteTarget } from './routing.ts';
 import { routesView } from './routes-view.ts';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
-import { skillCatalog, skillSize } from './skills.ts';
+import { repoSkills, skillCatalog, skillSize } from './skills.ts';
 import { backfillStats, directWork, loadStats, retroAsk, retroReport, roleSkills, statsReport, trackRun, writeRetro } from './stats.ts';
 import { errorCode, getLead, getTeam, git, isLive, members, scopedTeams, teamDir, teams, teamTitle, text, writeJson, type FleetEntry, type Team } from './registry.ts';
 
@@ -41,11 +41,13 @@ function registerRoleAgents(pi: ExtensionAPI, team: Team, presets: Presets) {
   const active = new Map<string, Registration>();
   const dispose = () => { for (const registration of active.values()) registration.dispose(); active.clear(); };
   pi.on('session_start', () => {
+    // Read at each start, so skills the repository adds while the team runs reach members after /reload.
+    const repo = repoSkills(team.worktree);
     try {
       for (const [role, item] of Object.entries(presets[team.preset])) {
         if (role === 'orchestrator' || (role === 'image' && imageDisabled())) continue;
         const request: { version: 1; name: string; definition: object; result?: { ok: true; registration: Registration } | { ok: false; error: Error } } = {
-          version: 1, name: scopedAgent(team, role), definition: roleAgent(team.preset, role, item),
+          version: 1, name: scopedAgent(team, role), definition: roleAgent(team.preset, role, item, 'team', repo),
         };
         pi.events.emit('pi-subagents:runtime-agent-register:v1', request);
         if (!request.result) throw new Error('pi-team requires the pi-subagents 0.90 runtime agent API.');
@@ -338,7 +340,7 @@ export default async function piTeam(pi: ExtensionAPI) {
           const u = usage?.get(s.name);
           return `- ${s.name} (${Math.round(skillSize(s) / 1000)}k chars${u ? `; ${p.role} read it in ${u.read} of ${Math.max(u.listed, u.read)} runs` : ''}): ${s.description.replace(/\s+/g, ' ').slice(0, 220)}`;
         });
-        const defaults = p.role ? roles[p.role].skills ?? [] : undefined;
+        const defaults = p.role ? [...new Set([...(roles[p.role].skills ?? []), ...repoSkills(team.worktree).names])] : undefined;
         return text([
           ...(defaults ? [`${p.role} default skills: ${defaults.length ? defaults.join(', ') : 'none'}`] : []),
           `${matches.length} installed skills match${matches.length > lines.length ? ` (showing ${lines.length})` : ''}.`, ...lines,

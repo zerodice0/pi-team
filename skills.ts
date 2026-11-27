@@ -14,9 +14,25 @@ export function skillCatalog(cwd: string): Skill[] {
         .flatMap(d => d.name.startsWith('@') ? packageDirs(join(dir, d.name)) : [join(dir, d.name)]);
     } catch { return []; }
   };
-  const skillPaths = [join(homedir(), '.agents', 'skills'), join(cwd, '.agents', 'skills'),
+  // Repository folders first: on a name clash the first skill loaded wins, and the project's should.
+  const skillPaths = [join(cwd, '.omp', 'skills'), join(cwd, '.agents', 'skills'), join(homedir(), '.agents', 'skills'),
     ...packageDirs(join(agentDir, 'npm', 'node_modules')).map(dir => join(dir, 'skills'))].filter(exists);
   return loadSkills({ cwd, agentDir, skillPaths, includeDefaults: true }).skills;
+}
+// Skills a repository ships for its own work. pi loads .pi/skills and .agents/skills, but a member
+// lists only its role's named skills, and .omp/skills (omp's folder, which many repositories keep)
+// pi never loads. Every member gets these, found through skillPath so a project skill wins over a
+// general skill of the same name.
+const repoSkillFolders = ['.omp/skills', '.pi/skills', '.agents/skills'];
+export interface RepoSkills { names: string[]; dirs: string[] }
+export function repoSkills(root: string): RepoSkills {
+  const dirs = repoSkillFolders.map(folder => join(root, folder)).filter(exists);
+  if (!dirs.length) return { names: [], dirs };
+  try {
+    const skills = loadSkills({ cwd: root, agentDir: getAgentDir(), skillPaths: dirs, includeDefaults: false }).skills
+      .filter(s => !s.disableModelInvocation && dirs.some(dir => inside(dir, s.filePath)));
+    return { names: [...new Set(skills.map(s => s.name))], dirs };
+  } catch { return { names: [], dirs }; }
 }
 export const skillSize = (skill: Skill) => { try { return statSync(skill.filePath).size; } catch { return 0; } };
 export const inside = (root: string, path: string) => { const rel = relative(root, path); return !!rel && !isAbsolute(rel) && !rel.startsWith('..'); };

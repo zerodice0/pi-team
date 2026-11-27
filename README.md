@@ -127,7 +127,7 @@ export PI_CACHE_RETENTION=long
 | 속성 | 뜻 |
 |---|---|
 | `description` | 한 줄 설명. 팀장이 역할을 고를 때 보는 목록과 agent 설명에 들어갑니다. |
-| `skills` | 팀원에게 줄 스킬 이름 목록. pi가 찾는 위치(`~/.agents/skills` 등)에 설치되어 있어야 합니다. |
+| `skills` | 팀원에게 줄 스킬 이름 목록. pi가 찾는 위치(`~/.agents/skills` 등)에 설치되어 있어야 합니다. 저장소가 `.omp/skills`, `.pi/skills`, `.agents/skills`에 둔 스킬은 이 목록과 상관없이 모든 팀원(메인 모드 구성원 포함)과 팀장에게 함께 보이고, 이름이 같은 일반 스킬보다 우선합니다. |
 | `mcp` | 팀원 전용 MCP 서버 이름 목록. `blender`와 `rea`가 있습니다. |
 | `tools`, `extensions`, `readOnly`, `max`, `prompt` | 도구 목록, 팀원 전용 확장, 읽기 전용 여부, 동시 실행 상한, 추가 프롬프트 |
 

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { blenderTools, toolName } from './blender-mcp/extension.ts';
 import { reaTools } from './rea-mcp/extension.ts';
 import { ambientScope, effectiveModels, readOverrides } from './overrides.ts';
+import type { RepoSkills } from './skills.ts';
 import { exists, locked, log, mkdir, namePattern, names, readJson, readText, remove, root, teamDir, writeAtomic, writeJson } from './registry.ts';
 
 export interface Role { models: string[]; description?: string; skills?: string[]; mcp?: string[]; tools?: string[]; extensions?: string[]; readOnly?: boolean; max?: number; prompt?: string }
@@ -187,8 +188,9 @@ export const childEntry = fileURLToPath(new URL('./child.ts', import.meta.url));
 // children never load the parent's extensions, so without it team/<preset>.<role> is unknown there.
 export const modelsEntry = fileURLToPath(new URL('./models.ts', import.meta.url));
 export const mainAgentName = (role: string) => `pi-team.${role}`;
-export function roleAgent(preset: string, role: string, item: Role, mode: 'team' | 'main' = 'team') {
+export function roleAgent(preset: string, role: string, item: Role, mode: 'team' | 'main' = 'team', repo?: RepoSkills) {
   const main = mode === 'main';
+  const skills = [...new Set([...(item.skills ?? []), ...(repo?.names ?? [])])];
   const defaults = role === 'image' ? ['read', 'codex_generate_image'] : item.readOnly ? ['read', 'grep', 'find', 'ls'] : ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls'];
   const excludeTools = item.readOnly ? ['write', 'edit'] : [];
   const mcp = item.mcp ?? [];
@@ -209,9 +211,10 @@ export function roleAgent(preset: string, role: string, item: Role, mode: 'team'
     role === 'image' ? 'Use codex_generate_image with save="custom", saveDir="artifacts", outputFormat="png". Report the saved PNG path or the exact tool error; do not substitute another image generator.' : '',
     ...mcp.map(name => mcpServers[name].prompt.replaceAll('team worktree', main ? 'repository' : 'team worktree')),
     item.prompt?.trim().replaceAll('team worktree', main ? 'repository' : 'team worktree'),
+    repo?.names.length ? `The repository ships its own skills (${repo.names.join(', ')}). When a task matches one, read it before starting; where it and a general skill both fit, follow the repository's.` : '',
   ].filter(Boolean).join('\n\n');
   const description = `pi-team ${preset} ${role} member${item.description ? `: ${item.description.trim()}` : ''}`;
-  return { description, model: `team/${preset}.${role}`, tools, excludeTools, skills: item.skills ?? [], extensions: [], subagentOnlyExtensions, systemPrompt };
+  return { description, model: `team/${preset}.${role}`, tools, excludeTools, skills, ...(repo?.dirs.length ? { skillPath: repo.dirs } : {}), extensions: [], subagentOnlyExtensions, systemPrompt };
 }
 export function generateAgents(presets: Presets, target = join(getAgentDir(), 'agents', 'pi-team')) {
   mkdir(target);

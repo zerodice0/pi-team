@@ -6,6 +6,7 @@ import { readJson, remove, root, writeJson } from './registry.ts';
 import { readOverrides, routeTable, scopePath } from './overrides.ts';
 import type { RouteTarget } from './routing.ts';
 import { routingGuide } from './lifecycle.ts';
+import { repoSkills } from './skills.ts';
 
 // Main mode: the main session runs on a preset's orchestrator as a fixed physical model (so the
 // thinking level, cache warming and cache stay as usual) and can delegate to that preset's roles
@@ -39,11 +40,12 @@ export function mainMode(pi: ExtensionAPI, load: () => Presets, cwd: string) {
   const unregister = () => { for (const r of active.values()) r.dispose(); active.clear(); roles = []; };
   const register = (presets: Presets, name: string) => {
     unregister();
+    const repo = repoSkills(cwd);
     try {
       for (const [role, item] of Object.entries(presets[name])) {
         if (role === 'orchestrator' || (role === 'image' && imageDisabled())) continue;
         const request: { version: 1; name: string; definition: object; result?: { ok: true; registration: Registration } | { ok: false; error: Error } } = {
-          version: 1, name: mainAgentName(role), definition: roleAgent(name, role, item, 'main'),
+          version: 1, name: mainAgentName(role), definition: roleAgent(name, role, item, 'main', repo),
         };
         pi.events.emit('pi-subagents:runtime-agent-register:v1', request);
         if (!request.result) throw new Error('pi-team main mode requires the pi-subagents 0.90 runtime agent API.');
