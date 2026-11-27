@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { randomUUID } from 'node:crypto';
 import { ago } from './disk.ts';
-import { clip, glyph, modelName, oneLine, type Line } from './frame.ts';
+import { clip, glyph, modelName, oneLine, spin, type Line } from './frame.ts';
 
 // This session's background subagents for the side panel, read through pi-subagents' in-process RPC
 // (docs/extension-api.md, "Refresh a host view without polling"): one `status` read when the panel
@@ -107,11 +107,11 @@ export function subagentLines(d: SubData, inner: number, now = Date.now()): Line
   const live = d.rows.filter(r => r.state === 'running' || r.state === 'queued');
   const running = live.filter(r => r.state === 'running').length;
   const lines: Line[] = [{
-    left: [['⋮', running ? 'ok' : 'label'], [' '], ['subagents', 'name', true]],
+    left: [[running ? spin(0, now) : '⋮', running ? 'ok' : 'label'], [' '], ['subagents', 'name', true]],
     right: [[[running && `${running} running`, live.length - running && `${live.length - running} queued`, d.tokens && `${tokens(d.tokens)} tok`].filter(Boolean).join(' · '), 'label']],
   }];
-  for (const r of live) {
-    const [mark, tone] = r.state === 'running' ? glyph.working : glyph.starting;
+  for (const [i, r] of live.entries()) {
+    const [mark, tone] = r.state === 'running' ? [spin(i + 1, now), glyph.working[1]] : glyph.starting;
     lines.push({
       left: [['    '], [mark, tone], [' '], [clip(short(r.agent), NAME).padEnd(NAME), 'name'], [' '], [doing(r, now), 'name']],
       right: [[modelName(r.model, r.level), 'label']],

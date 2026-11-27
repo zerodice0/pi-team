@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import type { OverlayOptions, TuiMouseEvent } from '@earendil-works/pi-tui';
 import { join } from 'node:path';
 import { status, teamLabel } from './board.ts';
-import { activity, clip, divider, edge, fg, glyph, headline, live, modelName, oneLine, row, short, wrap, type Info, type Line, type Segment } from './frame.ts';
+import { activity, clip, divider, edge, fg, glyph, headline, live, modelName, oneLine, row, short, spin, SPIN_MS, wrap, type Info, type Line, type Segment } from './frame.ts';
 
 export { activity, diffShort, live, oneLine } from './frame.ts';
 import { goalDetail, readJson, root, scopedTeams, writeJson } from './registry.ts';
@@ -27,8 +27,9 @@ const REFRESH_MS = 2000;
 const positionFile = join(root, 'panel.json');
 const KEY = 10;
 const MODEL = 17;
-function memberLine(p: { key: string; model?: string; level?: string; fallback?: boolean; next?: string; tool?: string; path?: string; error?: string }, state: string): Line {
-  const [mark, tone] = glyph[state] ?? ['?', 'label'];
+function memberLine(p: { key: string; model?: string; level?: string; fallback?: boolean; next?: string; tool?: string; path?: string; error?: string }, state: string, seed = 0, now = Date.now()): Line {
+  const [still, tone] = glyph[state] ?? ['?', 'label'];
+  const mark = state === 'working' ? spin(seed, now) : still;
   const busy = state === 'working' || state === 'waiting';
   return {
     left: [['    '], [mark, tone], [' '], [clip(p.key, KEY).padEnd(KEY), 'name'], [' '], [activity(p, state), busy ? 'name' : 'label']],
@@ -37,11 +38,11 @@ function memberLine(p: { key: string; model?: string; level?: string; fallback?:
     right: [[clip(p.next ? `→ ${p.next}` : modelName(p.model, p.level), MODEL), p.fallback || p.next ? 'warn' : 'label']],
   };
 }
-export function teamLines(d: Info, inner: number): Line[] {
+export function teamLines(d: Info, inner: number, now = Date.now()): Line[] {
   const rows = [...d.rows].sort((a, b) => Number(live.has(b.state)) - Number(live.has(a.state)) || (a.startedAt ?? 0) - (b.startedAt ?? 0));
-  const { mark, tone, summary, summaryTone } = headline(d);
+  const { state, mark, tone, summary, summaryTone } = headline(d);
   const lines: Line[] = [{
-    left: [[mark, tone], [' '], [teamLabel(d.team), 'name', true]],
+    left: [[state === 'working' ? spin(0, now) : mark, tone], [' '], [teamLabel(d.team), 'name', true]],
     right: [[summary, summaryTone]],
   }];
   const goal = wrap(goalDetail(d.team), inner - 2, d.state === 'done' ? 1 : 2);
@@ -61,7 +62,7 @@ export function teamLines(d: Info, inner: number): Line[] {
   // With nothing live, finished members are the story; otherwise fold them into one line.
   if (done.length && people.length <= 1 && done.length <= LIVE_ROWS - shown.length) shown.push(...done.map(p => ({ p, state: p.state })));
   else if (done.length) tail.push({ left: [['    '], [glyph.done[0], 'good'], [' '], [`${done.length} finished: ${done.map(p => p.key).join(', ')}`, 'label']] });
-  const members = [...shown.map(({ p, state }) => memberLine(p, state)), ...tail];
+  const members = [...shown.map(({ p, state }, i) => memberLine(p, state, i + 1, now)), ...tail];
   if (members.length) lines.push(...members);
   else lines.push({ left: [['    '], ['lead has not started yet', 'label']] });
   const mail = d.sent.filter(e => e.from !== 'main').at(-1);
@@ -206,7 +207,9 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
     }, { overlay: true, overlayOptions: options, onHandle: h => { handle = h; } })
       .finally(() => { handle = undefined; close = undefined; rerender = undefined; drag = undefined; });
     clearInterval(timer);
-    timer = setInterval(load, REFRESH_MS).unref();
+    // Spinners advance every second; team files are read every REFRESH_MS.
+    let ticks = 0;
+    timer = setInterval(() => { if (++ticks % (REFRESH_MS / SPIN_MS) === 0) load(); else check(); }, SPIN_MS).unref();
   };
   const hide = () => { visible = false; clearInterval(timer); timer = undefined; feed.stop(); handle?.setHidden(true); rerender?.(); };
   const toggle = (ctx: ExtensionContext) => visible ? hide() : show(ctx);

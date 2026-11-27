@@ -24,6 +24,11 @@ export const glyph: Record<string, [string, Tone]> = {
   failed: ['✗', 'crit'], stopped: ['■', 'label'], stale: ['!', 'warn'], starting: ['…', 'label'],
 };
 export const live = new Set(['working', 'waiting', 'idle', 'starting']);
+// What is working spins, as in pi-subagents' async widget: a braille frame that advances once a
+// second. `seed` offsets rows so they do not turn in lockstep. The board keeps the static ▶.
+const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+export const SPIN_MS = 1000;
+export const spin = (seed: number, now = Date.now()) => SPIN[(Math.floor(now / SPIN_MS) + seed) % SPIN.length];
 export const oneLine = (s: string) => s.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').replace(/\s+/g, ' ').trim();
 // Truncate plain text ourselves: truncateToWidth() inserts a full reset that would drop the panel background.
 export function clip(text: string, width: number) {
