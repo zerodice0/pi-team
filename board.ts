@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { send, type Address } from './mailbox.ts';
 import { findSummary, threads } from './lifecycle.ts';
 import { activity, BG, BG_OFF, diffShort, edge, fg, glyph, headline, modelName, oneLine, pad, row, short, wrap, type Info, type Line, type Segment, type Tone } from './frame.ts';
-import { clipText, getLead, goalDetail, leadState, ledger, members, readJson, teamDir, teamIcon, teams, teamTitle, type LedgerEntry, type Participant, type Snapshot, type Team } from './registry.ts';
+import { clipText, getLead, goalDetail, leadState, ledger, members, readJson, scopedTeams, teamDir, teamIcon, teams, teamTitle, type LedgerEntry, type Participant, type Snapshot, type Team } from './registry.ts';
 import { statSync } from 'node:fs';
 import { ago, diskUsage, offlineFor, STALE_MS, usageLine } from './disk.ts';
 import { readOverrides, scopePath } from './overrides.ts';
@@ -156,7 +156,16 @@ function summary(d: Info, inner: number): Line[] {
 // (`own`); any other team's lead gets it through the mailbox.
 export async function board(ctx: ExtensionContext, initial?: string, sender?: Address, own?: (body: string) => void) {
   if (!ctx.hasUI) throw new Error('The team board requires interactive Pi.');
-  let data = teams().map(status);
+  // Teams of this session's repository (its main checkout or any of its worktrees); a toggles all.
+  let all = false;
+  let hidden = 0;
+  const load = () => {
+    const scope = scopedTeams(ctx.cwd);
+    hidden = scope.elsewhere.length;
+    return (all ? [...scope.here, ...scope.elsewhere] : scope.here).map(status);
+  };
+  let data = load();
+  if (initial && !data.some(d => d.team.id === initial) && hidden) { all = true; data = load(); }
   let selected = Math.max(0, data.findIndex(d => d.team.id === initial));
   let view = initial && data.some(d => d.team.id === initial) ? 1 : 0;
   let offset = 0;
@@ -192,7 +201,7 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
     timer = setInterval(() => {
       try {
         const id = data[selected]?.team.id;
-        data = teams().map(status);
+        data = load();
         const index = data.findIndex(d => d.team.id === id);
         selected = index >= 0 ? index : Math.max(0, Math.min(selected, data.length - 1));
         refreshError = undefined;
@@ -222,7 +231,8 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
         room = Math.max(3, height - 4 - header.length - (refreshError ? 1 : 0) - compose.length);
         let body: Line[];
         let begin = 0;
-        if (!d) body = [{ left: [['  '], ['No teams yet', 'name', true]] }, { left: [['  '], ['/team start <preset or alias> -- <goal>', 'label']] }];
+        if (!d) body = [{ left: [['  '], [hidden && !all ? 'No teams in this repository' : 'No teams yet', 'name', true]] },
+          { left: [['  '], [hidden && !all ? `a shows ${count(hidden, 'team')} in other repositories` : '/team start <preset or alias> -- <goal>', 'label']] }];
         else if (view === 0) {
           const cards = data.map((t, i) => card(t, i === selected, inner));
           body = cards.flatMap((c, i) => i ? [blank, ...c] : c);
@@ -243,9 +253,9 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
         const key = (k: string, what: string) => `${fg('name', k)} ${fg('label', what)}`;
         const keys = composing
           ? ` ${[key('enter', 'send'), key('shift+enter', 'new line'), key('pgup/pgdn', 'scroll'), key('esc', 'cancel')].join(fg('dim', '  '))} `
-          : ` ${[view === 0 ? key('↑↓', 'select') : key('↑↓', 'scroll'), view === 0 ? key('enter', 'open') : key('←→', 'team'), key('tab', 'view'), key('s', 'reply'), key('esc', 'close')].join(fg('dim', '  '))} `;
+          : ` ${[view === 0 ? key('↑↓', 'select') : key('↑↓', 'scroll'), view === 0 ? key('enter', 'open') : key('←→', 'team'), key('tab', 'view'), key('s', 'reply'), ...(hidden ? [key('a', all ? 'this repo' : `all +${hidden}`)] : []), key('esc', 'close')].join(fg('dim', '  '))} `;
         return [
-          edge(width, ['╭', '╮'], ` ${fg('title', 'pi-team board', true)} `, ` ${tabs} `),
+          edge(width, ['╭', '╮'], ` ${fg('title', 'pi-team board', true)}${hidden ? fg('label', all ? ' · all repositories' : ' · this repository') : ''} `, ` ${tabs} `),
           row(blank, width),
           ...[...header, ...shown, ...filler].map(line => row(line, width, 0.4)),
           ...(refreshError ? [row({ left: [[oneLine(refreshError), 'crit']] }, width)] : []),
@@ -266,6 +276,12 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
         if (matchesKey(key, 'escape')) { done(undefined); return; }
         if (key === 's' && data[selected]) { composing = data[selected].team.id; note = undefined; focus(); tui.requestRender(); return; }
         const move = (to: number) => { selected = Math.max(0, Math.min(data.length - 1, to)); offset = 0; };
+        if (key === 'a' && hidden) {
+          const id = data[selected]?.team.id;
+          all = !all; data = load();
+          selected = Math.max(0, data.findIndex(x => x.team.id === id)); offset = 0;
+          tui.requestRender(); return;
+        }
         if (matchesKey(key, 'tab')) { view = (view + 1) % views.length; offset = 0; }
         else if (matchesKey(key, 'shift+tab')) { view = (view + views.length - 1) % views.length; offset = 0; }
         else if (matchesKey(key, 'enter') && view === 0 && data.length) { view = 1; offset = 0; }
@@ -288,7 +304,7 @@ export function widget(pi: ExtensionAPI) {
   let before = '';
   const refresh = () => {
     if (!ctx?.hasUI) return;
-    const active = teams();
+    const active = scopedTeams(ctx.cwd).here;
     const next = active.map(t => {
       const d = status(t);
       const finished = d.rows.filter(p => ['done', 'failed', 'stopped'].includes(p.state)).length;

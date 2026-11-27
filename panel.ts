@@ -5,7 +5,7 @@ import { status, teamLabel } from './board.ts';
 import { activity, clip, divider, edge, fg, glyph, headline, live, modelName, oneLine, row, short, wrap, type Info, type Line, type Segment } from './frame.ts';
 
 export { activity, diffShort, live, oneLine } from './frame.ts';
-import { goalDetail, readJson, root, teams, writeJson, type Participant } from './registry.ts';
+import { goalDetail, readJson, root, scopedTeams, writeJson } from './registry.ts';
 
 // A non-capturing side panel, so the user can keep typing while teams work.
 // By default it sits below quota-panel.ts (top-right, about ten rows) and shares that
@@ -71,6 +71,9 @@ export function teamLines(d: Info, inner: number): Line[] {
 interface Position { v?: number; offsetX: number; offsetY: number }
 export function teamPanel(pi: ExtensionAPI, current?: string) {
   let data: Info[] = [];
+  // Teams of the session's repository only; the others are counted and live in /team board.
+  let cwd = process.cwd();
+  let elsewhere = 0;
   let loadError: string | undefined;
   let handle: { setHidden(hidden: boolean): void } | undefined;
   let close: (() => void) | undefined;
@@ -98,13 +101,19 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
   let drawnWidth = WIDTH;
   let drawn = '';
   const load = () => {
-    try { data = teams().map(status).sort((a, b) => rank(a) - rank(b) || b.team.createdAt - a.team.createdAt); loadError = undefined; }
+    try {
+      const scope = scopedTeams(cwd);
+      data = scope.here.map(status).sort((a, b) => rank(a) - rank(b) || b.team.createdAt - a.team.createdAt);
+      elsewhere = scope.elsewhere.length;
+      loadError = undefined;
+    }
     catch (e) { loadError = String(e); }
-    const next = JSON.stringify([loadError, data.map(d => teamLines(d, drawnWidth - 4))]);
+    const next = JSON.stringify([loadError, elsewhere, data.map(d => teamLines(d, drawnWidth - 4))]);
     if (next !== drawn) { drawn = next; rerender?.(); }
   };
   const show = (ctx: ExtensionContext) => {
     visible = true;
+    cwd = ctx.cwd;
     load();
     if (handle) handle.setHidden(false);
     else void ctx.ui.custom<void>((tui, _theme, _keys, done) => {
@@ -118,7 +127,7 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
           const active = data.filter(d => d.state !== 'done').length;
           const blocks: Line[][] = loadError ? [[{ left: [[oneLine(loadError), 'crit']] }]]
             : data.length ? data.map(d => teamLines(d, inner))
-            : [[{ left: [['No teams running', 'name', true]] }, { left: [['/team start <preset> -- <goal>', 'label']] },
+            : [[{ left: [[elsewhere ? 'No teams in this repository' : 'No teams running', 'name', true]] }, { left: [['/team start <preset> -- <goal>', 'label']] },
               { left: [['Drag this title to move · alt+t to hide', 'label']] }]];
           // Fit the stack between the panel's top row and the editor, keeping whole teams where possible.
           const top = MARGIN + Math.min(options.offsetY ?? DEFAULT_Y, maxY(tui.terminal.rows));
@@ -144,7 +153,7 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
             row(blank, width),
             ...body.map(line => line === 'rule' ? divider(width) : row(line, width)),
             row(blank, width),
-            edge(width, ['╰', '╯'], ''),
+            edge(width, ['╰', '╯'], elsewhere ? ` ${fg('label', `+${elsewhere} in other repos · /team board`)} ` : ''),
           ];
           return lines;
         },

@@ -1,5 +1,5 @@
-import { appendFileSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { appendFileSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { execFileSync } from 'node:child_process';
@@ -160,6 +160,27 @@ export const getTeam = (team: string) => readJson<Team>(join(teamDir(team), 'tea
 export function teams() {
   return names(root).filter(n => namePattern.test(n) && n !== 'archive' && n !== 'vendor' && exists(join(root, n, 'team.json')))
     .map(n => getTeam(n)).filter((t): t is Team => !!t);
+}
+// The main checkout a path belongs to. A linked worktree (a team's, or any other) resolves through
+// Git's common directory to the same repository as its main checkout, so a lead in its worktree and
+// a main session in the checkout see the same teams. Undefined outside Git.
+const repoCache = new Map<string, string | undefined>();
+export function repoRoot(path: string) {
+  if (repoCache.has(path)) return repoCache.get(path);
+  let found: string | undefined;
+  try {
+    const common = git(path, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+    found = realpathSync(basename(common) === '.git' ? dirname(common) : common);
+  } catch { /* not a repository, or gone */ }
+  repoCache.set(path, found);
+  return found;
+}
+// Teams of the repository at cwd and the rest. Outside a repository every team counts as here.
+export function scopedTeams(cwd: string, all = teams()) {
+  const here = repoRoot(cwd);
+  if (!here) return { repo: undefined, here: all, elsewhere: [] as Team[] };
+  const mine = (t: Team) => (repoRoot(t.repo) ?? t.repo) === here;
+  return { repo: here, here: all.filter(mine), elsewhere: all.filter(t => !mine(t)) };
 }
 export const getLead = (team: string) => readJson<Participant>(join(teamDir(team), 'lead.json'));
 export function members(team: string) {
