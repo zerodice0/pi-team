@@ -256,23 +256,27 @@
     },
     "mix": {
       "extends": "base",
-      "description": "Claude lead, Codex members, each falling back to the other account.",
+      "description": "Claude lead and reviewers, Codex builders and task members, each falling back to the other account.",
       "slots": {
         "lead": [
           "opus:high",
           "sol:xhigh"
         ],
+        "task": [
+          "sol:high",
+          "sonnet:high"
+        ],
         "build": [
           "sol:medium",
-          "opus:high"
+          "sonnet:medium"
         ],
         "deep": [
-          "sol:high",
-          "opus:high"
+          "opus:high",
+          "sol:high"
         ],
         "scout": [
           "luna:high",
-          "sol:medium"
+          "haiku:medium"
         ],
         "vision": [
           "sol:high",
@@ -285,6 +289,11 @@
         "image": [
           "sol:medium"
         ]
+      },
+      "roles": {
+        "task": {
+          "models": "@task"
+        }
       }
     },
     "advanced": {

@@ -67,7 +67,7 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 
 | preset | 팀장(orchestrator) | 구성원 | 용도 |
 |---|---|---|---|
-| `mix` | opus:high → sol:xhigh | Codex 우선, Claude 예비 | 두 계정을 고루 쓸 때 |
+| `mix` | opus:high → sol:xhigh | 구현은 Codex 우선(task sol:high → sonnet:high, 나머지 구현 역할 sol:medium → sonnet:medium, scout luna → haiku), 설계·검토·문서는 Claude 우선(opus:high → sol:high) | 두 계정을 고루 쓸 때 |
 | `advanced` | fable:high → opus:high | `mix`와 같음 | 더 강한 팀장이 필요할 때 |
 | `claude` | opus:high | sonnet·opus·haiku, image 역할 없음 | Claude 계정만 쓸 때(macbook 등) |
 | `claude-advanced` | fable:xhigh → opus:xhigh | opus·sonnet, image 역할 없음 | Claude만 쓰면서 더 강한 팀이 필요할 때 |

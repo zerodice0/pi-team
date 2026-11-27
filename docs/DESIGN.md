@@ -72,7 +72,7 @@ flowchart TB
 - **예전 형식:** `version`이 없는 파일의 preset은 같은 이름의 아래 층 preset을 통째로 대체합니다.
 - **오류 격리:** preset마다 따로 해석·검증합니다. 실패한 preset은 목록에서 빠지고 이유가 `/team preset show`와 `Unknown preset` 오류에 나옵니다. 파일 자체를 읽지 못하면(JSON 오류, 잘못된 `models`) 전체가 실패합니다.
 - **팀 캐프처:** 팀을 만들 때 해석된(평면) preset 전체를 `teams/<id>/preset.json`에 저장합니다. 팀장과 구성원은 이 파일을 읽으므로, 실행 중 preset을 바꿔도 팀은 영향을 받지 않습니다.
-- **기본 preset:** `mix`, `advanced`, `claude`, `claude-advanced`, `codex`, `codex-advanced`. 역할과 슬롯의 연결은 다음과 같습니다. orchestrator는 `@lead`, task·frontend-dev·mobile-dev·game-dev·cloud-dev·qa-tester는 `@build`, scout는 `@scout`, vision은 `@vision`, tech-writer는 `@write`, image는 `@image`, 나머지 설계·검토 역할은 `@deep`입니다. `claude` 계열은 Codex OAuth가 필요한 image 역할을 뺍니다.
+- **기본 preset:** `mix`, `advanced`, `claude`, `claude-advanced`, `codex`, `codex-advanced`. 역할과 슬롯의 연결은 다음과 같습니다. orchestrator는 `@lead`, task·frontend-dev·mobile-dev·game-dev·cloud-dev·qa-tester는 `@build`, scout는 `@scout`, vision은 `@vision`, tech-writer는 `@write`, image는 `@image`, 나머지 설계·검토 역할은 `@deep`입니다. `claude` 계열은 Codex OAuth가 필요한 image 역할을 뺍니다. `mix` 계열은 task만 `@task` 슬롯(sol:high → sonnet:high)을 써서 다른 구현 역할보다 effort를 높입니다.
 - **로그인 확인:** 팀 시작과 메인 모드는 첫 후보에 로그인되어 있지 않은 역할을 알립니다(`authGaps`).
 
   | 역할 | `mix` 후보 체인 | 속성 |
