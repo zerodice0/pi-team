@@ -1,4 +1,5 @@
-import { realpathSync, renameSync, rmSync } from 'node:fs';
+import { cpSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { cachedUsage, size } from './disk.ts';
 import { dirname, basename, isAbsolute, join, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { generateAgents, imageDisabled, readPresets, unknownPreset, type Presets } from './presets.ts';
@@ -111,7 +112,7 @@ export const briefForm = [
   '## Do - numbered, highest priority first.',
   '## Do not - write scope (which files or folders it may change), files to leave alone, invariants. Read-only roles: say so.',
   '## Done when - acceptance criteria and how to check them (commands, captures, numbers).',
-  '## Limits - a time box (default 30 minutes), a notes file to append after each step, and when to stop and report. Keep notes, captures and other artifacts under artifacts/ in the team worktree (never /tmp) unless the user named another place.',
+  '## Limits - a time box (default 30 minutes), a notes file to append after each step, and when to stop and report. Keep notes, captures, evidence and other artifacts under artifacts/ in the team worktree; never in /tmp, the main checkout or another shared folder, which can be cleaned while the team runs. If the user or a document names another place, keep the originals under artifacts/ and copy them there when done.',
   '## Report - what to return: the result, checks run and checks not run, open issues, changed files, artifact paths.',
   'Add what the role needs: questions and evidence as path:line for investigation; findings P0-P2 with proof and a verdict for review; output paths for artifacts and captures.',
 ].join('\n');
@@ -124,6 +125,7 @@ export function leadPrompt(team: Team, presets: Presets) {
     `Delegate with the subagent tool only to these member agents, using the exact names. Pick the member whose description fits the work:\n${roleList(presets, team.preset).map(r => `- ${r}`).join('\n')}\nNever pass model, cwd, worktree, an external runner, or a script workflow. Use async children when members must exchange mail.`,
     'If a member fails with a recorded fallback and sideEffects=false, run that role again so routing skips the cooled model. If sideEffects=true, do not rerun it; report the failure and side effects to the user.',
     'Use team_peers to inspect members and team_send to collaborate. Use team_report to finalize the team summary. Do not merge or remove the worktree without the user.',
+    'Team artifacts (notes, captures, evidence, reports) live under artifacts/ in this worktree, even when a handoff document names a folder in the main checkout: copy them there at the end and keep the originals. /team close moves artifacts/ into the team archive. Rebuildable outputs (build, .dart_tool, DerivedData, node_modules) can be removed with /team clean while the team stays open.',
     intake,
     briefForm,
     leanLead,
@@ -139,6 +141,54 @@ export function refreshLeadPrompt(team: Team, presets: Presets) {
   if (readText(path) === next) return false;
   writeAtomic(path, next);
   return true;
+}
+
+// The one way to run a lead: team env, the orchestrator model, the lead prompt, role skills and extensions.
+// Without PI_TEAM_ROLE=lead and PI_TEAM_ID, pi-team starts as an ordinary main session.
+function leadCommand(team: Team, presets: Presets, tail: string[]) {
+  const orchestrator = presets[team.preset].orchestrator;
+  const extra = orchestrator.extensions?.flatMap(path => ['--extension', path]) ?? [];
+  const skillArgs = leadSkillArgs(orchestrator.skills, team.worktree);
+  return ['env', `PI_TEAM_ID=${team.id}`, 'PI_TEAM_ROLE=lead', `PI_CACHE_RETENTION=${cacheRetention()}`, 'pi', '--model', `team/${team.preset}.orchestrator`,
+    '--append-system-prompt', leadPromptPath(team.id), ...skillArgs, ...extra, ...tail].map(quote).join(' ');
+}
+// rename within a disk, copy and remove across disks (worktrees and ~/.pi can sit on different volumes).
+function moveTree(from: string, to: string) {
+  try { renameSync(from, to); }
+  catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e;
+    cpSync(from, to, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+    rmSync(from, { recursive: true, force: true });
+  }
+}
+const shells = new Set(['fish', 'bash', 'zsh', 'sh', 'dash', 'ksh', 'tcsh', 'nu', '-fish', '-bash', '-zsh', '-sh']);
+// Bring back a lead whose process ended (sleep, crash, closed pane) on its own session, so it keeps
+// its conversation. In its Herdr pane when that pane sits at a shell prompt; otherwise print the command.
+export function resumeLead(id: string) {
+  const team = getTeam(id);
+  if (!team) throw new Error(`Unknown team: ${id}`);
+  const lead = getLead(id);
+  if (isLive(lead) && lead!.state !== 'stopped') throw new Error(`The lead of ${id} is already running (PID ${lead!.pid}).`);
+  if (!exists(team.worktree)) throw new Error(`The worktree of ${id} is gone: ${team.worktree}`);
+  const presets = readPresets(team.worktree, id);
+  if (!presets[team.preset]) throw unknownPreset(team.worktree, team.preset);
+  refreshLeadPrompt(team, presets);
+  const session = lead?.sessionFile && exists(lead.sessionFile) ? ['--session', lead.sessionFile] : ['--continue'];
+  const command = `cd ${quote(team.worktree)} && ${leadCommand(team, presets, session)}`;
+  let blocked = '';
+  if (team.pane) {
+    try {
+      const info = JSON.parse(exec('herdr', ['pane', 'process-info', '--pane', team.pane], team.repo)) as { result?: { process_info?: { foreground_processes?: { name?: string; argv?: string[] }[] } } };
+      const fg = info.result?.process_info?.foreground_processes ?? [];
+      const busy = fg.filter(p => !shells.has(p.name ?? '') && !shells.has(p.argv?.[0]?.split('/').pop() ?? ''));
+      if (!busy.length) {
+        exec('herdr', ['pane', 'run', team.pane, command], team.repo);
+        return `Resuming the lead of ${id} in pane ${team.pane}${session[0] === '--session' ? ' on its last session' : ''}.`;
+      }
+      blocked = ` Pane ${team.pane} is running ${busy.map(p => p.argv?.join(' ') || p.name).join(', ')}; exit it first, then run:`;
+    } catch { blocked = ` Pane ${team.pane} is not available; run this in a terminal:`; }
+  }
+  return `${blocked ? blocked.trim() : `Run this in a terminal to resume the lead of ${id}:`}\n${command}`;
 }
 
 export function start(cwd: string, p: Start, alias?: { key: string; names: string[]; description?: string; icon?: string }) {
@@ -218,9 +268,7 @@ export function start(cwd: string, p: Start, alias?: { key: string; names: strin
     const promptPath = leadPromptPath(id);
     writeAtomic(promptPath, leadPrompt(team, captured));
     writeJson(join(dir, 'team.json'), team);
-    const extra = captured[p.preset].orchestrator.extensions?.flatMap(path => ['--extension', path]) ?? [];
-    const skillArgs = leadSkillArgs(captured[p.preset].orchestrator.skills, team.worktree);
-    const command = ['env', `PI_TEAM_ID=${id}`, 'PI_TEAM_ROLE=lead', `PI_CACHE_RETENTION=${cacheRetention()}`, 'pi', '--model', `team/${p.preset}.orchestrator`, '--append-system-prompt', promptPath, ...skillArgs, ...extra, '--', p.goal].map(quote).join(' ');
+    const command = leadCommand(team, captured, ['--', p.goal]);
     // Herdr passes pane run's command tail as shell text, not as an argv array.
     if (team.pane) exec('herdr', ['pane', 'run', team.pane, command], repo);
     return team.pane ? `Started ${id}: ${team.worktree} (${team.branch}), workspace ${team.workspace}, pane ${team.pane}.${skipNote}`
@@ -260,8 +308,15 @@ export function closeTeam(id: string, confirmLead: boolean, confirmUnmerged: boo
     const base = team.baseBranch ?? team.baseCommit;
     const merged = git(team.repo, ['rev-list', '--count', `${base}..refs/heads/${team.branch}`]) === '0';
     if (!merged && !confirmUnmerged) throw new Error('Branch is not merged into its base. Use --confirm-unmerged to retain the branch and remove only the worktree.');
-    if (git(team.worktree, ['status', '--porcelain'])) throw new Error('Worktree is dirty. Commit or remove the changes before closing.');
+    // artifacts/ (notes, captures, evidence) is not part of the work to merge: it moves into the team
+    // folder and so into the archive, instead of blocking the close or vanishing with the worktree.
+    const keep = join(team.worktree, 'artifacts');
+    const keepArtifacts = exists(keep) && !git(team.worktree, ['ls-files', '--', 'artifacts']);
+    const dirty = git(team.worktree, ['status', '--porcelain', '--untracked-files=normal']).split('\n').filter(l => l && !(keepArtifacts && /^\?\? artifacts\/?$/.test(l)));
+    if (dirty.length) throw new Error(`Worktree is dirty. Commit or remove the changes before closing (artifacts/ is kept in the archive):\n${dirty.slice(0, 20).join('\n')}`);
     const dir = teamDir(id);
+    if (keepArtifacts) moveTree(keep, join(dir, exists(join(dir, 'artifacts')) ? `artifacts-${Date.now()}` : 'artifacts'));
+    const freed = cachedUsage(id);
     // Keep a retrospective draft with the archive, refreshed with the final run records.
     writeRetro(id, retroReport(id), dir);
     const archive = join(root, 'archive', id);
@@ -298,12 +353,13 @@ export function closeTeam(id: string, confirmLead: boolean, confirmUnmerged: boo
       try { host = closeHostWorkspace(team); }
       catch (e) { host = ` Could not check Herdr workspace ${team.hostWorkspace}: ${String(e)}`; }
     }
+    const notes = [keepArtifacts && ` Artifacts kept in ${join(archive, 'artifacts')}.`, freed && ` Freed about ${size(freed.totalKb)}.`].filter(Boolean).join('');
     if (merged) {
       // Use Git's own ancestry guard as well; keeping a branch is preferable to forcing deletion.
       try { git(team.repo, ['branch', '-d', team.branch]); }
-      catch (e) { return `Closed ${id}; archive: ${archive}. Branch kept: ${String(e)}${host}`; }
+      catch (e) { return `Closed ${id}; archive: ${archive}. Branch kept: ${String(e)}${notes}${host}`; }
     }
-    return `Closed ${id}; archive: ${archive}.${merged ? '' : ` Unmerged branch retained: ${team.branch}.`}${host}`;
+    return `Closed ${id}; archive: ${archive}.${merged ? '' : ` Unmerged branch retained: ${team.branch}.`}${notes}${host}`;
   });
 }
 export function findSummary(id: string) {

@@ -43,7 +43,9 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 | `/team panel [on\|off\|reset]` · `ctrl+shift+t` · `alt+t` | 팀 패널을 켜거나 끕니다. 패널이 떠 있어도 입력은 그대로 할 수 있습니다. `reset`은 패널을 원래 위치로 되돌립니다. |
 | `/team send lead@<team> <내용>` | 팀장에게 메시지를 보냅니다. |
 | `/team collect <team>` | 팀 요약을 메인 세션으로 가져옵니다. 모델은 실행하지 않습니다. |
-| `/team close <team> [--confirm-unmerged]` | worktree를 정리합니다. 병합되지 않은 branch는 지우지 않습니다. |
+| `/team close <team> [--confirm-unmerged]` | worktree를 정리합니다. 병합되지 않은 branch는 지우지 않습니다. worktree의 `artifacts/`는 팀 archive(`teams/archive/<team>/artifacts/`)로 옮겨 남기고, 그 밖의 커밋하지 않은 변경이 있으면 닫지 않습니다. |
+| `/team resume <team>` | 프로세스가 끝난 팀장(잠자기, 충돌, 닫힌 pane)을 마지막 세션으로 다시 띄웁니다. 팀 pane이 셸 프롬프트에 있으면 그 pane에서 실행하고, 다른 프로세스가 돌고 있으면 실행할 명령만 보여 줍니다. 팀장은 `PI_TEAM_ROLE=lead`와 `PI_TEAM_ID`가 있어야 팀장으로 뜨므로, 팀 pane에서 그냥 `pi`로 세션을 재개하면 팀장이 아니라 일반 메인 세션이 됩니다. 이렇게 시작한 세션에는 경고가 뜹니다. |
+| `/team clean [team] [--yes]` | 팀을 연 채로 다시 만들 수 있는 빌드 산출물만 지웁니다. 대상은 Git이 무시하고 추적 파일이 없는 `build`, `.build`, `.dart_tool`, `DerivedData`, `Pods`, `node_modules`, `.gradle`, `.cxx`, `target`, `dist`, `.next`, `.turbo`, `.expo`, `.svelte-kit` 폴더입니다(깊이 4까지, `artifacts/` 제외). 목록과 크기를 보여 주고 확인을 받은 뒤 지웁니다. `config/app.env`처럼 무시되는 설정 파일은 건드리지 않습니다. 작업 중인 구성원이 있으면 거절합니다. 팀장 세션에서는 팀을 생략할 수 있습니다. |
 | `/team main [<preset>\|off] [--default]` | 메인 모드를 켜거나 끄고, 인자가 없으면 상태를 보여 줍니다. `--default`는 이 호스트의 새 세션에 적용할 기본값을 저장하거나 지웁니다. |
 | `/team routes [--team <id>] [--text]` | 라우터 설정 화면을 엽니다. 역할마다 다음 요청이 갈 모델·effort(NEXT), 예비 후보(FALLBACK), 지금 실행 중인 구성원의 모델(RUNNING)을 보여 주고, 임시 조정한 역할은 주황색입니다. `↑↓` 역할, `←→` effort 한 단계, `m` 모델 고르기(이 호스트에서 로그인된 모델만), `r` 역할 되돌리기, `R` 전체 되돌리기, `tab` 대상 전환(메인 모드와 팀들), `esc` 닫기입니다. 바꾼 값은 바로 저장되어 다음 요청부터 적용됩니다. 팀장처럼 구성원 알림과 우편으로 턴이 이어지는 중이어도, 바꾼 뒤 첫 요청에서 새 모델로 옮깁니다(이때 프롬프트 캐시를 한 번 새로 씁니다). 팀장이 아직 새 설정으로 요청하지 않았으면 팀 패널과 board는 팀장 모델 자리에 `→ opus-5-5·medium`처럼 다음 모델을 주황색으로 보여 줍니다. `--text`나 print 모드에서는 표를 출력합니다. |
 | `/team effort <role\|all> <level\|reset> [--team <id>]` | 역할의 effort(thinking 수준)를 임시로 바꿉니다. preset 파일은 바꾸지 않으며 다음 요청부터 적용됩니다. 팀장 세션의 `orchestrator`와 메인 모드의 `orchestrator`는 그 세션의 thinking 수준 자체를 바꾸며, 팀장 세션에서는 같은 값을 팀 override에도 저장합니다. |
@@ -142,6 +144,12 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 - **팀장 프롬프트 갱신:** 팀장 프롬프트(`lead-prompt.md`)는 팀장이 시작할 때마다 지금 코드의 지침으로 다시 씁니다. pi는 확장을 불러온 뒤에 `--append-system-prompt` 파일을 읽으므로, 예전에 만든 팀도 팀장을 다시 띄우기만 하면 새 지침을 받습니다. 내용이 바뀌었으면 시작할 때 알림을 띄웁니다.
 - **간결한 `team_peers`:** 팀장과 실행 중인 구성원의 키·역할·상태·모델·현재 도구, 끝난 구성원의 키와 상태만 반환합니다.
 - **구성원 읽기 규칙:** 큰 파일은 범위를 정해 읽고, 이미 읽은 파일과 이미지는 바뀌지 않았으면 다시 읽지 않게 합니다.
+
+### 디스크와 오래 방치된 팀
+
+- **크기 표시:** `/team board`의 팀 카드에 worktree 크기와 그 가운데 다시 만들 수 있는 산출물 크기를 보여 줍니다. `du`는 큰 트리에서 몇 초가 걸리므로 백그라운드에서 계산해 `teams/<team>/disk.json`에 10분 동안 캐시하고, 2초마다 갱신하는 패널에는 넣지 않습니다. 산출물이 1G를 넘으면 `/team clean`을 안내합니다.
+- **방치 경고:** 팀장이 24시간(`PI_TEAM_STALE_HOURS`) 넘게 꺼져 있는 열린 팀은 메인 세션을 시작할 때 한 번 알립니다. 패널과 board는 「lead offline 2d」처럼 꺼진 시간을 보여 주고, 하루가 넘으면 빨간색으로 표시합니다.
+- **산출물 위치:** 팀장과 구성원은 메모, 캡처, 증거를 팀 worktree의 `artifacts/`에 둡니다. 인계 문서가 메인 checkout 같은 바깥 폴더를 지정해도 원본은 `artifacts/`에 두고 끝날 때 복사합니다. 바깥 폴더는 팀이 도는 동안 정리될 수 있기 때문입니다. `/team close`는 `artifacts/`를 archive로 옮깁니다.
 
 ### 착수 점검과 지시문 양식
 

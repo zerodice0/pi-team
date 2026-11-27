@@ -7,7 +7,8 @@ import { pathToFileURL } from 'node:url';
 import { realpathSync } from 'node:fs';
 import { aliasHints, delegate, readTargets, resolveTarget, showAliases, startNamed, type TeamTargets } from './aliases.ts';
 import { board, status, widget } from './board.ts';
-import { closeTeam, findSummary, parseStart, refreshLeadPrompt, report, retitle, roleList, splitGoal, syncHerdrLabel } from './lifecycle.ts';
+import { closeTeam, findSummary, parseStart, refreshLeadPrompt, report, resumeLead, retitle, roleList, splitGoal, syncHerdrLabel } from './lifecycle.ts';
+import { ago, cachedUsage, diskUsage, measure, removeRebuildable, size, staleTeams, usageLine } from './disk.ts';
 import { registerMailbox, send, sendParams } from './mailbox.ts';
 import { teamPanel } from './panel.ts';
 import { herdrStatus } from './herdr-status.ts';
@@ -20,7 +21,7 @@ import { routesView } from './routes-view.ts';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import { skillCatalog, skillSize } from './skills.ts';
 import { backfillStats, directWork, loadStats, retroAsk, retroReport, roleSkills, statsReport, trackRun, writeRetro } from './stats.ts';
-import { errorCode, getTeam, git, isLive, members, teamDir, teams, text, writeJson, type FleetEntry, type Team } from './registry.ts';
+import { errorCode, getLead, getTeam, git, isLive, members, teamDir, teams, text, writeJson, type FleetEntry, type Team } from './registry.ts';
 
 interface Registration { dispose(): void }
 interface RequiredExtensionAPI {
@@ -197,6 +198,28 @@ function guardDelegation(pi: ExtensionAPI, team: Team, presets: Presets, active:
   pi.on('tool_result', e => { if (e.toolName === 'subagent') pending.delete(e.toolCallId); });
   pi.on('agent_settled', () => pending.clear());
 }
+// Notes for a session that is not a lead.
+// - A plain `pi` in a team's worktree, or one that resumed the lead's session file, looks like the
+//   lead but runs as a main session: no lead.json, mail, lead prompt or team stats, and its
+//   pi-team.<role> agents are not team members. That is how a restarted lead went unnoticed.
+// - On startup, open teams whose lead has been gone for a day, the ones that fill disks unnoticed.
+export function startNotes(ctx: Pick<ExtensionContext, 'cwd' | 'sessionManager'>, reason: string): [string, 'warning' | 'info'][] {
+  const notes: [string, 'warning' | 'info'][] = [];
+  const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+  const cwd = real(ctx.cwd);
+  const file = ctx.sessionManager.getSessionFile();
+  const all = teams();
+  const own = all.find(t => real(t.worktree) === cwd || (file && getLead(t.id)?.sessionFile === file));
+  if (own) notes.push([`pi-team: this session is in team ${own.id}'s ${real(own.worktree) === cwd ? 'worktree' : 'lead session'} but is not running as its lead, so team mail, the lead prompt and team records are off, and pi-team.<role> agents here are not team members. Exit, then run /team resume ${own.id} from the main session.`, 'warning']);
+  if (reason !== 'startup' || own) return notes;
+  const stale = staleTeams();
+  for (const { team } of stale) diskUsage(team); // refresh sizes in the background for the board
+  if (stale.length) notes.push([`pi-team: ${stale.length} open team${stale.length === 1 ? ' has' : 's have'} had no lead for over a day:\n${stale.map(({ team, offline }) => {
+    const u = cachedUsage(team.id);
+    return `- ${team.id} (offline ${ago(offline)}${u ? `, ${usageLine(u)}` : ''})`;
+  }).join('\n')}\nResume with /team resume <team>, free builds with /team clean <team>, or finish with /team close <team>.`, 'warning']);
+  return notes;
+}
 export default async function piTeam(pi: ExtensionAPI) {
   if (process.env.PI_SUBAGENT_CHILD === '1') return; // The required child extension owns member mode.
   const mode = process.env.PI_TEAM_ROLE;
@@ -216,6 +239,7 @@ export default async function piTeam(pi: ExtensionAPI) {
     registerMainLoader(pi, refresh, targets, configCwd);
     generateAgents(presets);
   }
+  if (!team) pi.on('session_start', (event, ctx) => { if (ctx.hasUI) for (const [text, level] of startNotes(ctx, event.reason)) ctx.ui.notify(text, level); });
   let state: ParticipantRuntime | undefined;
   let leadLevelRef: (() => ThinkingLevel | undefined) | undefined;
   if (team) {
@@ -375,13 +399,38 @@ export default async function piTeam(pi: ExtensionAPI) {
         const output = closeTeam(name, flags.includes('--confirm-lead'), flags.includes('--confirm-unmerged'));
         refresh(); return show(ctx, output);
       }
+      if (!team && verb === 'resume') {
+        const id = args.trim();
+        if (!id || /\s/.test(id)) throw new Error('Usage: /team resume <team>');
+        const output = resumeLead(id); refresh(); return show(ctx, output);
+      }
+      if (verb === 'clean') {
+        const words = args.split(/\s+/).filter(Boolean);
+        const yes = words.includes('--yes');
+        const id = words.find(w => w !== '--yes') ?? team?.id;
+        if (!id || words.filter(w => w !== '--yes').length > 1) throw new Error('Usage: /team clean <team> [--yes]');
+        const target = getTeam(id);
+        if (!target) throw new Error(`Unknown team: ${id}`);
+        // A running member may be in the middle of a build that writes to these folders.
+        const busy = members(id).filter(m => isLive(m) && m.state === 'working');
+        if (busy.length) throw new Error(`Members are working (${busy.map(m => m.key).join(', ')}); clean after they finish.`);
+        const before = measure(target);
+        if (!before.dirs.length) return show(ctx, `${id}: ${usageLine(before)}; no rebuildable folders to remove.`);
+        const list = before.dirs.map(d => `- ${d.path}  ${size(d.kb)}`).join('\n');
+        const lead = getLead(id);
+        const warn = isLive(lead) && lead!.state === 'working' ? '\nThe lead is working; a build it started may fail.' : '';
+        const ok = yes || (ctx.hasUI && await ctx.ui.confirm(`Remove ${size(before.rebuildableKb)} of rebuildable folders from ${id}?`, `${list}${warn}\nThey are recreated by the next build. Source, config and artifacts/ stay.`));
+        if (!ok) return show(ctx, `${id}: ${usageLine(before)}. Rebuildable folders:\n${list}\nNothing removed${ctx.hasUI ? '' : '; add --yes to remove them'}.`);
+        const after = removeRebuildable(target, before.dirs);
+        return show(ctx, `${id}: removed ${before.dirs.length} folder${before.dirs.length === 1 ? '' : 's'}, freed ${size(Math.max(0, before.totalKb - after.totalKb))}; ${usageLine(after)}.`);
+      }
       if (!team && verb === 'collect') {
         const summary = findSummary(args);
         if (!summary) throw new Error(`No report for ${args}.`);
         pi.sendMessage({ customType: 'pi-team-summary', content: summary, display: true, details: { team: args } }, { deliverAs: 'nextTurn' });
         return show(ctx, `Queued ${args} summary for the next user turn (no model request).`);
       }
-      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | send <address> <body> | routes | effort <role|all> <level|reset> | model <role|all> <model|reset> [--team <id>]${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | close <team>'}`);
+      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | send <address> <body> | routes | effort <role|all> <level|reset> | model <role|all> <model|reset> [--team <id>] | clean [team] [--yes]${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | resume <team> | close <team>'}`);
     } catch (e) { if (ctx.hasUI) ctx.ui.notify(e instanceof Error ? e.message : String(e), 'error'); else throw e; }
   } });
 }

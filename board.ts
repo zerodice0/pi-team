@@ -6,6 +6,7 @@ import { findSummary, threads } from './lifecycle.ts';
 import { activity, BG, BG_OFF, diffShort, edge, fg, glyph, headline, modelName, oneLine, pad, row, short, wrap, type Info, type Line, type Segment, type Tone } from './frame.ts';
 import { clipText, getLead, goalDetail, leadState, ledger, members, readJson, teamDir, teamIcon, teams, teamTitle, type LedgerEntry, type Participant, type Snapshot, type Team } from './registry.ts';
 import { statSync } from 'node:fs';
+import { ago, diskUsage, offlineFor, STALE_MS, usageLine } from './disk.ts';
 import { readOverrides, scopePath } from './overrides.ts';
 
 // Surfaces show the title; the ID, preset and alias appear only where an address is needed (board).
@@ -71,7 +72,19 @@ function card(d: Info, selected: boolean, inner: number): Line[] {
     { left: [rail, ['  '], [teamIds(t), 'label']] },
     { left: [rail, ['  '], [[count(d.rows.length + d.pending.length, 'member'), count(d.sent.length, 'message'), diff].filter(Boolean).join(' · '), 'label']] },
     { left: [rail, ['  '], [`${tilde(t.worktree)} · ${t.branch}`, 'label']] },
+    ...disk(d, rail),
   ];
+}
+// Worktree size from a cache refreshed in the background (du is too slow for a redraw), with a hint
+// when rebuildable outputs are large or the lead has been gone for a day.
+function disk(d: Info, rail: Segment): Line[] {
+  if (d.state === 'done') return [];
+  const u = diskUsage(d.team);
+  if (!u) return [{ left: [rail, ['  '], ['measuring disk use…', 'dim']] }];
+  const away = offlineFor(d.team, d.lead);
+  const heavy = u.rebuildableKb >= 1024 * 1024;
+  const hint = away !== undefined && away >= STALE_MS ? `lead offline ${ago(away)}: /team resume or /team close ${d.team.id}` : heavy ? `/team clean ${d.team.id}` : '';
+  return [{ left: [rail, ['  '], [usageLine(u), heavy ? 'warn' : 'label'], ...(hint ? [[' · ', 'dim'], [hint, 'label']] as Segment[] : [])] }];
 }
 // Team view: a roster whose columns size to their content; "now" takes whatever width is left.
 function roster(d: Info, inner: number): Line[] {

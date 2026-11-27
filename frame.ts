@@ -1,6 +1,7 @@
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { basename } from 'node:path';
 import type { status } from './board.ts';
+import { ago, offlineFor, STALE_MS } from './disk.ts';
 
 // Shared drawing for the side panel and the board: one titanium surface, a quiet border, gold for
 // the product's name and the current choice, and color only where a state means something.
@@ -80,10 +81,12 @@ export function headline(d: Info) {
   const state = working && (d.state === 'idle' || d.state === 'working') ? 'working' : d.state;
   const [mark, tone] = glyph[state] ?? ['?', 'label'];
   const summary = d.state === 'done' ? ['done', diffShort(d.diff)].filter(Boolean).join(' · ')
-    : d.state === 'stale' ? 'lead offline'
+    : d.state === 'stale' || (d.state === 'stopped' && !working) ? `lead offline ${ago(offlineFor(d.team, d.lead) ?? 0)}`
     : d.state === 'starting' ? 'starting'
     : [working && `${working} working`, finished && `${finished} done`].filter(Boolean).join(' · ') || d.state;
-  const summaryTone: Tone = d.state === 'done' ? 'good' : d.state === 'stale' ? 'warn' : 'label';
+  // A lead gone for a day is how teams end up forgotten with gigabytes of builds: make it stand out.
+  const away = d.state === 'stale' || d.state === 'stopped' ? offlineFor(d.team, d.lead) ?? 0 : 0;
+  const summaryTone: Tone = d.state === 'done' ? 'good' : away >= STALE_MS ? 'crit' : d.state === 'stale' ? 'warn' : 'label';
   return { state, mark, tone, summary, summaryTone, working, finished };
 }
 
