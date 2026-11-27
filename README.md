@@ -124,6 +124,13 @@ npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 }
 ```
 
+팀장 프롬프트의 역할 목록에는 역할마다 `description`이 붙고, 그 아래에 자주 쓰는 역할을 언제 부를지 정한 안내가 이어집니다. 이 안내는 그 preset에 있는 역할만 다룹니다.
+- scout: 첫 위임 전과, 코드·문서·로그의 사실로 결정되는 질문이 생길 때마다 부릅니다. `경로:줄` 근거를 받아 일하며, 명령을 실행하지 못하므로 빌드·테스트·git 이력은 task나 qa-tester에게 맡깁니다.
+- task: 구현, 디버깅, 수정을 맡습니다. 설명이 더 잘 맞는 전문 역할이 있으면 그 역할에 맡깁니다.
+- reviewer: 구성원이 코드를 바꾼 뒤, 사용자에게 완료를 보고하기 전에 부릅니다.
+- qa-tester: 웹 UI를 브라우저에서 실행하고 확인할 때 부릅니다.
+- vision: 스크린샷과 디자인 이미지를 판독할 때 부릅니다.
+
 팀원 전용 MCP 서버는 팀원이 처음 도구를 호출할 때 시작하고, 팀원 세션이 끝날 때 프로세스 그룹째 종료합니다(SIGTERM, 5초 뒤 SIGKILL). 도구를 쓰지 않는 팀원은 서버를 띄우지 않으며, 도구 정의는 `~/.cache/pi-team/mcp/<이름>-tools.json`에 캐시합니다.
 
 `mcp: ["blender"]`인 팀원은 첫 Blender 호출 때 자기 전용 헤드리스 Blender와 [mcp-for-blender](https://github.com/ahujasid/mcp-for-blender) 서버를 빈 포트로 띄우고, 끝날 때 함께 종료합니다. 저장하지 않은 장면을 잃지 않도록 유휴 종료는 하지 않습니다. 메인 세션과 팀장은 Blender를 띄우지 않으며, 여러 팀원이 동시에 각자의 Blender를 쓸 수 있습니다. 서버 도구는 `mcp__blender__execute_blender_code`, `get_scene_info`, `look`, `search_assets`, `import_asset`, `get_addon_status` 이름으로 등록됩니다. 필요한 것은 PATH의 `blender`(macOS는 `/Applications/Blender.app`도 찾음), `uv`(`uvx`), `python3`입니다. mcp-for-blender는 시작할 때마다 최신판을 받고, 서버와 Blender 애드온은 같은 판을 씁니다. Blender 출력은 `~/.cache/pi-team/blender-mcp/`에 남습니다.

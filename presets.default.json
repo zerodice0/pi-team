@@ -20,30 +20,35 @@
           ]
         },
         "task": {
+          "description": "General implementation: code changes, debugging and fixes across files; runs builds and tests. Prefer a specialist role whose description fits better",
           "models": [
             "@build"
           ],
           "max": 3
         },
         "scout": {
+          "description": "Read-only investigation before and during work: finds files, code paths, docs and log lines and reports facts with path:line evidence. No edits and no commands (no bash), so it cannot build, test or run git",
           "models": [
             "@scout"
           ],
           "readOnly": true
         },
         "reviewer": {
+          "description": "Read-only review of a member's changes before they reach the user: correctness, regressions, missed requirements; findings P0-P2 with evidence and a verdict",
           "models": [
             "@deep"
           ],
           "readOnly": true
         },
         "vision": {
+          "description": "Read-only reading of screenshots, captures and design images: layout, text, states and differences against a reference",
           "models": [
             "@vision"
           ],
           "readOnly": true
         },
         "image": {
+          "description": "Generates or edits images with the Codex image tool and saves them under artifacts/",
           "models": [
             "@image"
           ]

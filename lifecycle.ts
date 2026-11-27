@@ -119,10 +119,25 @@ export const briefForm = [
 
 // The lead prompt is built from the current code's guidance, not frozen at team creation: a lead
 // writes it again on every start (see index.ts), so restarting an older team picks up new guidance.
+// When to reach for the common roles, for the ones this preset has. Descriptions say what a role
+// is; this says when the lead should use it, which the 11-26 preset rework had dropped.
+const routes: [role: string, line: string][] = [
+  ['scout', 'scout: first, whenever facts in the code, docs or logs decide a question (where something is defined or called, what a config does, which files a change touches). Ask a concrete question and work from its path:line findings instead of reading files yourself. It cannot run commands, so builds, tests and git history go to task or qa-tester.'],
+  ['task', 'task: implementation, debugging and fixes, unless a specialist role\'s description fits the work better.'],
+  ['reviewer', 'reviewer: after a member changes code and before you report it to the user as done. Give it the goal, the done criteria and the changed files.'],
+  ['qa-tester', 'qa-tester: to run and check a web UI in a browser.'],
+  ['vision', 'vision: to read screenshots and design images; do not open the same images yourself.'],
+];
+export function routingGuide(presets: Presets, preset: string) {
+  const roles = presets[preset] ?? {};
+  const lines = routes.filter(([role]) => Object.hasOwn(roles, role)).map(([, line]) => `- pi-team.${preset}-${line}`);
+  return lines.length ? `When to use the common roles:\n${lines.join('\n')}` : '';
+}
 export function leadPrompt(team: Team, presets: Presets) {
   return [
     `You lead pi-team ${team.id} ("${teamTitle(team)}") in ${team.worktree}. Talk directly to the user. If the work changes course, the user can retitle the team with /team title.`,
     `Delegate with the subagent tool only to these member agents, using the exact names. Pick the member whose description fits the work:\n${roleList(presets, team.preset).map(r => `- ${r}`).join('\n')}\nNever pass model, cwd, worktree, an external runner, or a script workflow. Use async children when members must exchange mail.`,
+    routingGuide(presets, team.preset),
     'If a member fails with a recorded fallback and sideEffects=false, run that role again so routing skips the cooled model. If sideEffects=true, do not rerun it; report the failure and side effects to the user.',
     'Use team_peers to inspect members and team_send to collaborate. Use team_report to finalize the team summary. Do not merge or remove the worktree without the user.',
     'Team artifacts (notes, captures, evidence, reports) live under artifacts/ in this worktree, even when a handoff document names a folder in the main checkout: copy them there at the end and keep the originals. /team close moves artifacts/ into the team archive. Rebuildable outputs (build, .dart_tool, DerivedData, node_modules) can be removed with /team clean while the team stays open.',
