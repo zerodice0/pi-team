@@ -144,6 +144,8 @@ export function routingGuide(presets: Presets, preset: string, prefix = `pi-team
   const lines = routes.filter(([role]) => Object.hasOwn(roles, role)).map(([, line]) => `- ${prefix}${line}`);
   return lines.length ? `When to use the common roles:\n${lines.join('\n')}` : '';
 }
+// Where and how a team is closed; a lead pane cannot do it, so leads must not tell the user to type it there.
+export const closeGuide = (id: string) => `Closing team ${id} happens in the main session (a pi in the repository that is not this lead), not in this lead pane: the user runs /team close ${id}, or asks the main session to close it. Add --confirm-lead while this lead still runs, --confirm-unmerged when the branch is not merged, or --keep-worktree to archive the team and keep its worktree and branch for the repository's own cleanup.`;
 export function leadPrompt(team: Team, presets: Presets) {
   return [
     `You lead pi-team ${team.id} ("${teamTitle(team)}") in ${team.worktree}. Talk directly to the user. If the work changes course, the user can retitle the team with /team title.`,
@@ -152,7 +154,8 @@ export function leadPrompt(team: Team, presets: Presets) {
     routingGuide(presets, team.preset),
     'If a member fails with a recorded fallback and sideEffects=false, run that role again so routing skips the cooled model. If sideEffects=true, do not rerun it; report the failure and side effects to the user.',
     'Use team_peers to inspect members and team_send to collaborate. Use team_report to finalize the team summary. Do not merge or remove the worktree without the user.',
-    'Team artifacts (notes, captures, evidence, reports) live under artifacts/ in this worktree, even when a handoff document names a folder in the main checkout: copy them there at the end and keep the originals. /team close moves artifacts/ into the team archive. Rebuildable outputs (build, .dart_tool, DerivedData, node_modules) can be removed with /team clean while the team stays open.',
+    'Team artifacts (notes, captures, evidence, reports) live under artifacts/ in this worktree, even when a handoff document names a folder in the main checkout: copy them there at the end and keep the originals. Closing moves artifacts/ into the team archive. Rebuildable outputs (build, .dart_tool, DerivedData, node_modules) can be removed with /team clean while the team stays open.',
+    closeGuide(team.id),
     intake,
     briefForm,
     leanLead,
@@ -341,7 +344,30 @@ export function retitle(id: string, title: string) {
   }
   return `Team ${id} is now titled "${clean}".${note}`;
 }
-export function closeTeam(id: string, confirmLead: boolean, confirmUnmerged: boolean) {
+// What closing a team would do, for a confirmation before anything changes.
+export function closePlan(id: string, keepWorktree = false) {
+  teamDir(id);
+  const team = getTeam(id);
+  if (!team) throw new Error(`Unknown team: ${id}`);
+  const lead = getLead(id);
+  const live = members(id).filter(isLive).map(m => m.key);
+  const base = team.baseBranch ?? team.baseCommit;
+  let merged = false;
+  try { merged = git(team.repo, ['rev-list', '--count', `${base}..refs/heads/${team.branch}`]) === '0'; } catch { /* reported as unmerged */ }
+  let dirty = 0;
+  try { dirty = git(team.worktree, ['status', '--porcelain', '--untracked-files=normal']).split('\n').filter(l => l && !/^\?\? artifacts\/?$/.test(l)).length; } catch { /* worktree missing */ }
+  return [
+    `${teamTitle(team)} (${id})`,
+    `Lead: ${isLive(lead) ? `live (${lead!.state})` : 'not running'}${live.length ? `; live members: ${live.join(', ')}` : ''}`,
+    `Branch ${team.branch}: ${merged ? 'merged into its base' : 'NOT merged'}; uncommitted changes besides artifacts/: ${dirty}`,
+    keepWorktree
+      ? `Archives the team (artifacts/ moves to ${join(root, 'archive', id, 'artifacts')}); keeps the worktree ${team.worktree} and branch ${team.branch}.`
+      : `Archives the team (artifacts/ moves to ${join(root, 'archive', id, 'artifacts')}), removes the worktree ${team.worktree}${merged ? ` and deletes the merged branch ${team.branch}` : ''}. This cannot be undone.`,
+  ].join('\n');
+}
+// keepWorktree: archive the team record and artifacts/ only, for repositories whose own process
+// removes worktrees and branches; the worktree, its changes and the branch stay as they are.
+export function closeTeam(id: string, confirmLead: boolean, confirmUnmerged: boolean, keepWorktree = false) {
   teamDir(id);
   return locked(join(root, `.participants-${id}.lock`), () => {
     const team = getTeam(id);
@@ -351,13 +377,13 @@ export function closeTeam(id: string, confirmLead: boolean, confirmUnmerged: boo
     if (members(id).some(isLive)) throw new Error('Team members are still live.');
     const base = team.baseBranch ?? team.baseCommit;
     const merged = git(team.repo, ['rev-list', '--count', `${base}..refs/heads/${team.branch}`]) === '0';
-    if (!merged && !confirmUnmerged) throw new Error('Branch is not merged into its base. Use --confirm-unmerged to retain the branch and remove only the worktree.');
+    if (!merged && !confirmUnmerged && !keepWorktree) throw new Error('Branch is not merged into its base. Use --confirm-unmerged to retain the branch and remove only the worktree, or --keep-worktree to keep both.');
     // artifacts/ (notes, captures, evidence) is not part of the work to merge: it moves into the team
     // folder and so into the archive, instead of blocking the close or vanishing with the worktree.
     const keep = join(team.worktree, 'artifacts');
     const keepArtifacts = exists(keep) && !git(team.worktree, ['ls-files', '--', 'artifacts']);
     const dirty = git(team.worktree, ['status', '--porcelain', '--untracked-files=normal']).split('\n').filter(l => l && !(keepArtifacts && /^\?\? artifacts\/?$/.test(l)));
-    if (dirty.length) throw new Error(`Worktree is dirty. Commit or remove the changes before closing (artifacts/ is kept in the archive):\n${dirty.slice(0, 20).join('\n')}`);
+    if (dirty.length && !keepWorktree) throw new Error(`Worktree is dirty. Commit or remove the changes before closing (artifacts/ is kept in the archive):\n${dirty.slice(0, 20).join('\n')}`);
     const dir = teamDir(id);
     if (keepArtifacts) moveTree(keep, join(dir, exists(join(dir, 'artifacts')) ? `artifacts-${Date.now()}` : 'artifacts'));
     const freed = cachedUsage(id);
@@ -374,7 +400,7 @@ export function closeTeam(id: string, confirmLead: boolean, confirmUnmerged: boo
       renameSync(dir, archive);
       return undelivered;
     });
-    try {
+    if (!keepWorktree) try {
       if (team.workspace) {
         try { herdr(team.repo, 'worktree', 'remove', '--workspace', team.workspace); }
         catch (e) {
@@ -392,6 +418,10 @@ export function closeTeam(id: string, confirmLead: boolean, confirmUnmerged: boo
         if (source && source !== id && getTeam(source)) log(source, e);
       }
     });
+    if (keepWorktree) {
+      const kept = keepArtifacts ? ` Artifacts kept in ${join(archive, 'artifacts')}.` : '';
+      return `Closed ${id}; archive: ${archive}. Kept the worktree ${team.worktree} and branch ${team.branch}${dirty.length ? ` with ${dirty.length} uncommitted change${dirty.length === 1 ? '' : 's'}` : ''}; remove them through the repository's own process.${kept}`;
+    }
     let host = '';
     if (team.workspace) {
       try { host = closeHostWorkspace(team); }

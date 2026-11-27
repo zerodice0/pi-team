@@ -1,4 +1,5 @@
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
+import type { AutocompleteItem } from '@earendil-works/pi-tui';
 import { Type } from 'typebox';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
@@ -7,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { realpathSync } from 'node:fs';
 import { aliasHints, delegate, readTargets, resolveTarget, showAliases, startNamed, type TeamTargets } from './aliases.ts';
 import { board, status, widget } from './board.ts';
-import { cacheRetention, closeTeam, findSummary, memberCacheRetention, parseStart, refreshLeadPrompt, relaunchAsLead, report, resumeLead, retitle, roleList, splitGoal, syncHerdrLabel } from './lifecycle.ts';
+import { cacheRetention, closeGuide, closePlan, closeTeam, findSummary, memberCacheRetention, parseStart, refreshLeadPrompt, relaunchAsLead, report, resumeLead, retitle, roleList, splitGoal, syncHerdrLabel } from './lifecycle.ts';
 import { applyMainCache, cacheNotice, cacheReport, shellCache } from './cache.ts';
 import { ago, cachedUsage, diskUsage, measure, removeRebuildable, size, staleTeams, usageLine } from './disk.ts';
 import { registerMailbox, send, sendParams } from './mailbox.ts';
@@ -109,7 +110,7 @@ function registerMainLoader(pi: ExtensionAPI, refresh: () => void, targets: Team
   const activation = hints
     ? `Only call when the user expressly asks you to create or manage a Pi team or to delegate work to a named team. Configured team aliases: ${hints}. Use team_delegate for named-team delegation even if the team already exists.`
     : 'Only call when the user expressly asks you to create or manage a Pi team.';
-  const toolNames = ['team_start', 'team_status', 'team_send', 'team_delegate'];
+  const toolNames = ['team_start', 'team_status', 'team_send', 'team_delegate', 'team_close'];
   // People tell teams apart by title; the name only becomes the branch and address.
   const title = Type.Optional(Type.String({ description: 'Short title of the work for the panel, board and Herdr, in the user\'s language, about 15-40 characters, e.g. "폴더블 시뮬레이터 동작 검증". Always give one for a new team.' }));
   const name = Type.Optional(Type.String({ description: 'Team ID for the branch and addresses: 2-4 English words, e.g. foldable-sim-check (lowercased and hyphenated, at most 32 characters). Always give one for a new team unless you name an alias.' }));
@@ -132,6 +133,19 @@ function registerMainLoader(pi: ExtensionAPI, refresh: () => void, targets: Team
             const result = delegate(ctx.cwd, targets, p.team, p.task, p.fromDirty, { title: p.title, name: p.name });
             refresh();
             return text(result + gapNote(ctx, targets, cwd, p.team));
+          } });
+        // Closing removes a worktree and maybe a branch, so the user confirms every call in a dialog.
+        pi.registerTool({ name: 'team_close', label: 'Close team',
+          description: 'Close a team the user asked you to close: archive its record and artifacts/, remove its worktree and delete its branch if merged. The user confirms in a dialog. confirmLead closes while the lead still runs, confirmUnmerged removes the worktree of an unmerged branch (the branch stays), keepWorktree archives the team but keeps the worktree and branch for the repository\'s own cleanup. Only when the user expressly asks; never to tidy up on your own.',
+          parameters: Type.Object({ team: Type.String(), confirmLead: Type.Optional(Type.Boolean()), confirmUnmerged: Type.Optional(Type.Boolean()), keepWorktree: Type.Optional(Type.Boolean()) }),
+          async execute(_id, p, _signal, _update, ctx) {
+            if (!ctx.hasUI) throw new Error(`Closing needs the user's confirmation in interactive pi. Ask the user to run /team close ${p.team}.`);
+            const flags = [p.confirmLead && '--confirm-lead', p.confirmUnmerged && '--confirm-unmerged', p.keepWorktree && '--keep-worktree'].filter(Boolean).join(' ');
+            const ok = await ctx.ui.confirm(`Close team ${p.team}${flags ? ` (${flags})` : ''}?`, closePlan(p.team, !!p.keepWorktree));
+            if (!ok) return text(`The user declined; team ${p.team} is still open.`);
+            const result = closeTeam(p.team, !!p.confirmLead, !!p.confirmUnmerged, !!p.keepWorktree);
+            refresh();
+            return text(result);
           } });
         installed = true;
       }
@@ -228,6 +242,38 @@ export function startNotes(ctx: Pick<ExtensionContext, 'cwd' | 'sessionManager'>
     return `- ${team.id} (offline ${ago(offline)}${u ? `, ${usageLine(u)}` : ''})`;
   }).join('\n')}\nResume with /team resume <team>, free builds with /team clean <team>, or finish with /team close <team>.`, 'warning']);
   return notes;
+}
+const closeFlags = ['--confirm-lead', '--confirm-unmerged', '--keep-worktree'];
+// Completions for /team: the subcommand, then team IDs, presets or fixed words where an argument takes one.
+const leadVerbs = ['board', 'panel', 'routes', 'effort', 'model', 'preset', 'stats', 'send', 'title', 'done', 'clean', 'cache', 'close'];
+const mainVerbs = ['board', 'panel', 'routes', 'effort', 'model', 'preset', 'stats', 'send', 'title', 'clean', 'cache', 'main', 'start', 'delegate', 'alias', 'collect', 'resume', 'close'];
+export function teamCompletions(prefix: string, lead: boolean, cwd: string): AutocompleteItem[] | null {
+  const words = prefix.split(/\s+/);
+  const last = words.pop() ?? '';
+  const done = words.join(' ');
+  const pick = (values: string[]) => {
+    const items = [...new Set(values)].filter(v => v.startsWith(last)).map(v => ({ value: done ? `${done} ${v}` : v, label: v }));
+    return items.length ? items : null;
+  };
+  try {
+    if (!words.length) return pick(lead ? leadVerbs : mainVerbs);
+    const [verb] = words;
+    const ids = () => teams().map(t => t.id);
+    const presetNames = () => Object.keys(presetCatalog(cwd).presets);
+    if (words.length === 1) {
+      if (['close', 'resume', 'collect', 'clean', 'title'].includes(verb) && !(lead && verb !== 'clean')) return pick(ids());
+      if (verb === 'panel') return pick(['on', 'off', 'reset']);
+      if (verb === 'preset') return pick(['show', 'use', 'reset']);
+      if (verb === 'main') return pick([...presetNames(), 'off']);
+      if (verb === 'start' || verb === 'delegate') return pick(presetNames());
+      if (verb === 'stats') return pick(['import', 'retro']);
+      if (verb === 'alias') return pick(['show']);
+    }
+    if (verb === 'close' && words.length >= 2) return pick(closeFlags.filter(f => !words.includes(f)));
+    if (verb === 'preset' && words.length === 2 && ['show', 'use'].includes(words[1])) return pick(presetNames());
+    if (verb === 'stats' && words.length === 2 && words[1] === 'retro') return pick(ids());
+  } catch { /* completions are a convenience */ }
+  return null;
 }
 export default async function piTeam(pi: ExtensionAPI) {
   if (process.env.PI_SUBAGENT_CHILD === '1') return; // The required child extension owns member mode.
@@ -356,11 +402,13 @@ export default async function piTeam(pi: ExtensionAPI) {
         // A retrospective draft from the run records; the lead turns only lasting patterns into lessons.
         const retro = retroReport(team.id);
         writeRetro(team.id, retro);
-        return text([path, '', retro, '', retroAsk].join('\n'));
+        return text([path, '', retro, '', retroAsk, `- ${closeGuide(team.id)}`].join('\n'));
       } });
   }
   const show = (ctx: ExtensionContext, output: string) => { if (ctx.hasUI) ctx.ui.notify(output, 'info'); else process.stdout.write(`${output}\n`); };
-  pi.registerCommand('team', { description: 'Start, inspect, message or close a Pi team', async handler(input, ctx) {
+  pi.registerCommand('team', { description: 'Start, inspect, message or close a Pi team',
+    getArgumentCompletions: prefix => teamCompletions(prefix, !!team, configCwd),
+    async handler(input, ctx) {
     try {
       const [, verb = '', args = ''] = /^(\S+)(?:\s+([\s\S]*))?$/.exec(input.trim()) ?? [];
       if (verb === 'board') {
@@ -426,10 +474,13 @@ export default async function piTeam(pi: ExtensionAPI) {
         const output = delegate(ctx.cwd, targets, target, goal); refresh(); return show(ctx, output + gapNote(ctx, targets, configCwd, target));
       }
       if (targets && verb === 'alias' && args === 'show') return show(ctx, showAliases(targets));
+      if (team && verb === 'close') {
+        return show(ctx, `This is the lead pane of ${team.id}; a team is closed from the main session (a pi in the repository without this team): /team close ${team.id} [--confirm-lead] [--confirm-unmerged] [--keep-worktree]. Use --confirm-lead while this lead still runs.`);
+      }
       if (!team && verb === 'close') {
-        const [name, ...flags] = args.split(/\s+/);
-        if (!name || flags.some(f => !['--confirm-lead', '--confirm-unmerged'].includes(f))) throw new Error('Usage: /team close <team> [--confirm-lead] [--confirm-unmerged]');
-        const output = closeTeam(name, flags.includes('--confirm-lead'), flags.includes('--confirm-unmerged'));
+        const [name, ...flags] = args.split(/\s+/).filter(Boolean);
+        if (!name || flags.some(f => !closeFlags.includes(f))) throw new Error('Usage: /team close <team> [--confirm-lead] [--confirm-unmerged] [--keep-worktree]');
+        const output = closeTeam(name, flags.includes('--confirm-lead'), flags.includes('--confirm-unmerged'), flags.includes('--keep-worktree'));
         refresh(); return show(ctx, output);
       }
       if (!team && verb === 'resume') {
@@ -464,7 +515,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         pi.sendMessage({ customType: 'pi-team-summary', content: summary, display: true, details: { team: args } }, { deliverAs: 'nextTurn' });
         return show(ctx, `Queued ${args} summary for the next user turn (no model request).`);
       }
-      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | preset use <preset>|reset [--team <id>] | send <address> <body> | routes | effort <role|all> <level|reset> | model <role|all> <model|reset> [--team <id>] | clean [team] [--yes] | cache${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | resume <team> | close <team>'}`);
+      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | preset use <preset>|reset [--team <id>] | send <address> <body> | routes | effort <role|all> <level|reset> | model <role|all> <model|reset> [--team <id>] | clean [team] [--yes] | cache${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | resume <team> | close <team> [--confirm-lead] [--confirm-unmerged] [--keep-worktree]'}`);
     } catch (e) { if (ctx.hasUI) ctx.ui.notify(e instanceof Error ? e.message : String(e), 'error'); else throw e; }
   } });
 }
