@@ -6,6 +6,7 @@ import { activity, clip, divider, edge, fg, glyph, headline, live, modelName, on
 
 export { activity, diffShort, live, oneLine } from './frame.ts';
 import { goalDetail, readJson, root, scopedTeams, writeJson } from './registry.ts';
+import { subagentFeed, subagentLines } from './subagents.ts';
 
 // A non-capturing side panel, so the user can keep typing while teams work.
 // By default it sits below quota-panel.ts (top-right, about ten rows) and shares that
@@ -100,6 +101,12 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
   // Ask for a frame only when the drawn content changes; pi still calls render() on every frame it draws.
   let drawnWidth = WIDTH;
   let drawn = '';
+  // This session's background subagents. A lead's members are already in its team block.
+  const feed = subagentFeed(pi, agent => !!current && agent.endsWith(`.team-${current}`), () => check());
+  const check = () => {
+    const next = JSON.stringify([loadError, elsewhere, data.map(d => teamLines(d, drawnWidth - 4)), subagentLines(feed.data(), drawnWidth - 4)]);
+    if (next !== drawn) { drawn = next; rerender?.(); }
+  };
   const load = () => {
     try {
       const scope = scopedTeams(cwd);
@@ -108,13 +115,13 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
       loadError = undefined;
     }
     catch (e) { loadError = String(e); }
-    const next = JSON.stringify([loadError, elsewhere, data.map(d => teamLines(d, drawnWidth - 4))]);
-    if (next !== drawn) { drawn = next; rerender?.(); }
+    check();
   };
   const show = (ctx: ExtensionContext) => {
     visible = true;
     cwd = ctx.cwd;
     load();
+    feed.start();
     if (handle) handle.setHidden(false);
     else void ctx.ui.custom<void>((tui, _theme, _keys, done) => {
       rerender = () => tui.requestRender();
@@ -125,25 +132,37 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
           drawnWidth = width;
           const inner = width - 4;
           const active = data.filter(d => d.state !== 'done').length;
+          const subs = subagentLines(feed.data(), inner);
           const blocks: Line[][] = loadError ? [[{ left: [[oneLine(loadError), 'crit']] }]]
             : data.length ? data.map(d => teamLines(d, inner))
+            : subs.length ? []
             : [[{ left: [[elsewhere ? 'No teams in this repository' : 'No teams running', 'name', true]] }, { left: [['/team start <preset> -- <goal>', 'label']] },
               { left: [['Drag this title to move · alt+t to hide', 'label']] }]];
           // Fit the stack between the panel's top row and the editor, keeping whole teams where possible.
           const top = MARGIN + Math.min(options.offsetY ?? DEFAULT_Y, maxY(tui.terminal.rows));
           const room = Math.max(MIN_BODY, tui.terminal.rows - top - FRAME - RESERVE);
+          // Teams come first, but keep the subagents' rule and header line in view.
+          const teamRoom = subs.length && blocks.length && room > MIN_BODY + 2 ? room - 2 : room;
           const body: (Line | 'rule')[] = [];
           for (const [i, block] of blocks.entries()) {
             const need = block.length + (i ? 1 : 0);
-            if (body.length + need > room) {
+            if (body.length + need > teamRoom) {
               const left = blocks.length - i;
               // A first team taller than the room is cut rather than dropped.
-              if (i === 0) body.push(...block.slice(0, room - 1));
-              if (body.length < room) body.push({ left: [['  '], [i === 0 ? '… more in /team board' : `+${left} more team${left === 1 ? '' : 's'} · /team board`, 'label']] });
+              if (i === 0) body.push(...block.slice(0, teamRoom - 1));
+              if (body.length < teamRoom) body.push({ left: [['  '], [i === 0 ? '… more in /team board' : `+${left} more team${left === 1 ? '' : 's'} · /team board`, 'label']] });
               break;
             }
             if (i) body.push('rule');
             body.push(...block);
+          }
+          if (subs.length) {
+            const rule = body.length ? 1 : 0;
+            const left = room - body.length - rule;
+            if (left > 0 && rule) body.push('rule');
+            if (subs.length <= left) body.push(...subs);
+            else if (left > 1) body.push(...subs.slice(0, left - 1), { left: [['    '], ['… more in /subagents-fleet', 'label']] });
+            else if (left === 1) body.push(subs[0]);
           }
           const dragging = !!drag;
           const title = ` ${fg(dragging ? 'ok' : 'title', 'pi-team', true)} `;
@@ -185,13 +204,13 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
     clearInterval(timer);
     timer = setInterval(load, REFRESH_MS).unref();
   };
-  const hide = () => { visible = false; clearInterval(timer); timer = undefined; handle?.setHidden(true); };
+  const hide = () => { visible = false; clearInterval(timer); timer = undefined; feed.stop(); handle?.setHidden(true); };
   const toggle = (ctx: ExtensionContext) => visible ? hide() : show(ctx);
   // ctrl+shift+t needs a terminal that reports modified keys; alt+t works everywhere.
   for (const key of ['ctrl+shift+t', 'alt+t'] as const) {
     pi.registerShortcut(key, { description: 'Toggle the pi-team side panel', handler: async ctx => { if (ctx.hasUI) toggle(ctx); } });
   }
-  pi.on('session_shutdown', () => { clearInterval(timer); timer = undefined; visible = false; close?.(); });
+  pi.on('session_shutdown', () => { clearInterval(timer); timer = undefined; visible = false; feed.stop(); close?.(); });
   return {
     command(args: string, ctx: ExtensionContext) {
       if (!ctx.hasUI) throw new Error('The team panel requires interactive Pi.');
