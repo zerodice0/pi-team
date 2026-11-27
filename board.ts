@@ -44,8 +44,9 @@ function leadNext(team: string, lead?: Participant) {
   let changedAt = 0;
   try { changedAt = statSync(scopePath({ team })).mtimeMs; } catch { return undefined; }
   if ((lead.routedAt ?? 0) >= changedAt) return undefined;
-  const model = o.model?.replace(/:[a-z]+$/, '') ?? lead.model;
-  const level = o.level ?? o.model?.split(':').pop() ?? lead.level;
+  const first = o.model ?? o.models?.[0];
+  const model = first?.replace(/:[a-z]+$/, '') ?? lead.model;
+  const level = o.level ?? first?.split(':').pop() ?? lead.level;
   return model === lead.model && level === lead.level ? undefined : modelName(model, level);
 }
 const views = ['Teams', 'Team', 'Messages', 'Summary'] as const;
@@ -55,7 +56,7 @@ const clock = (at: number) => new Date(at).toTimeString().slice(0, 5);
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const delivery: Record<LedgerEntry['event'], [string, Tone]> = {
   sent: ['queued', 'label'], delivered: ['delivered', 'good'], replied: ['replied', 'ok'], closed: ['closed', 'label'],
-  undelivered: ['undelivered', 'crit'], fallback: ['fallback', 'warn'],
+  undelivered: ['undelivered', 'crit'], fallback: ['fallback', 'warn'], route: ['route', 'ok'],
 };
 const blank: Line = { left: [] };
 // Teams view: one card per team. The selected card carries the gold rail and the only bright goal,

@@ -4,10 +4,11 @@ import { join } from 'node:path';
 import { candidates, levels, presetCatalog, type Role } from './presets.ts';
 import { locked, mkdir, readJson, root, teamDir, writeJson } from './registry.ts';
 
-// Temporary routing changes on top of a preset: a role's effort, or a model tried before its
-// candidates. They live beside the team (or the main-mode session) and never touch presets.json,
-// so closing the team or leaving main mode drops them. Routers read them on every request.
-export interface RoleOverride { level?: ThinkingLevel; model?: string }
+// Temporary routing changes on top of a preset: a role's effort, a model tried before its
+// candidates, or the whole candidate chain of another preset's same role (models, with that preset's
+// name in preset). They live beside the team (or the main-mode session) and never touch
+// presets.json, so closing the team or leaving main mode drops them. Routers read them on every request.
+export interface RoleOverride { level?: ThinkingLevel; model?: string; models?: string[]; preset?: string }
 export type Overrides = Record<string, RoleOverride>;
 export type Scope = { team: string } | { main: string };
 export const scopePath = (s: Scope) => 'team' in s ? join(teamDir(s.team), 'overrides.json') : join(root, 'main-overrides', `${s.main.replace(/[^\w.-]/g, '_')}.json`);
@@ -26,7 +27,7 @@ export function setOverride(scope: Scope, role: string, patch: RoleOverride | nu
   return locked(`${path}.lock`, () => {
     const all = readOverrides(scope);
     const next = patch ? { ...all[role], ...patch } : undefined;
-    for (const k of ['level', 'model'] as const) if (next && next[k] === undefined) delete next[k];
+    for (const k of ['level', 'model', 'models', 'preset'] as const) if (next && next[k] === undefined) delete next[k];
     if (next && Object.keys(next).length) all[role] = next; else delete all[role];
     writeJson(path, all);
     return all;
@@ -41,11 +42,13 @@ export function parseModel(input: string, cwd: string, fallbackLevel: ThinkingLe
   if (!id) throw new Error(`Unknown model alias ${m[1]}. Use provider/model or one of: ${Object.keys(presetCatalog(cwd).models).join(', ')}.`);
   return `${id}:${m[2] ?? fallbackLevel}`;
 }
-// The candidate chain a role actually routes through: an override model first, then the preset's.
+// The candidate chain a role actually routes through: an override model first, then the preset's
+// (or the chain taken from another preset).
 export function effectiveModels(item: Role, override?: RoleOverride) {
-  if (!override?.model) return item.models;
+  const base = override?.models?.length ? override.models : item.models;
+  if (!override?.model) return base;
   const key = (c: string) => c.replace(/:[a-z]+$/, '');
-  return [override.model, ...item.models.filter(c => key(c) !== key(override.model!))];
+  return [override.model, ...base.filter(c => key(c) !== key(override.model!))];
 }
 const short = (key: string) => key.split('/').pop()!.replace(/^claude-/, '');
 // One line per role: where a request would go now, then the fallbacks; override marks and unusable candidates.
@@ -65,7 +68,7 @@ export function routeTable(roles: Record<string, Role>, registry: ExtensionConte
       return `${state && state === pick ? '▸' : ''}${short(key)}·${level}${mark}`;
     });
     const live = current?.role === role && current.model ? `  now ${short(current.model)}·${current.level ?? '?'}` : '';
-    const tags = [o?.model && 'model override', o?.level && 'effort override'].filter(Boolean).join(', ');
+    const tags = [o?.preset && `${o.preset} models`, o?.model && 'model override', o?.level && 'effort override'].filter(Boolean).join(', ');
     return `${role.padEnd(width)}  ${steps.join(' → ')}${tags ? `  [${tags}]` : ''}${live}`;
   }).join('\n');
 }

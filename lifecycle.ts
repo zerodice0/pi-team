@@ -148,6 +148,7 @@ export function leadPrompt(team: Team, presets: Presets) {
   return [
     `You lead pi-team ${team.id} ("${teamTitle(team)}") in ${team.worktree}. Talk directly to the user. If the work changes course, the user can retitle the team with /team title.`,
     `Delegate with the subagent tool only to these member agents, using the exact names. Pick the member whose description fits the work:\n${roleList(presets, team.preset).map(r => `- ${r}`).join('\n')}\nNever pass model, cwd, worktree, an external runner, or a script workflow. Use async children when members must exchange mail.`,
+    'To change which model or effort a role runs on, or to route the team through another preset\'s models, use team_route (action show lists the current routes; do not read preset files). When the user asks for a change, pass their words as approval and do it in the same turn. On your own you may only lower a role\'s effort or put a model already in its candidates first; propose anything else to the user.',
     routingGuide(presets, team.preset),
     'If a member fails with a recorded fallback and sideEffects=false, run that role again so routing skips the cooled model. If sideEffects=true, do not rerun it; report the failure and side effects to the user.',
     'Use team_peers to inspect members and team_send to collaborate. Use team_report to finalize the team summary. Do not merge or remove the worktree without the user.',
@@ -446,6 +447,7 @@ export function report(team: Team, summary: string, status: string) {
       return `- ${first.subject ?? first.id}: ${group.map(({message, state}) => `${message.from} → ${message.to} (${state}): ${message.body}`).join(' / ')}${group.length === 1 && group[0].state !== 'closed' ? ' [no reply]' : ''}`;
     }) : ['- None.']), '', `## Diff stat\n${diffStat(team.worktree, team.baseCommit)}`, '', '## Fallback and cooldown',
     ...events.filter(e => e.event === 'fallback').map(e => `- ${e.from}: ${e.model} ${e.reason}, expires ${new Date(e.until!).toISOString()}, sideEffects=${e.sideEffects}`),
+    '', '## Routing changes', ...(events.some(e => e.event === 'route') ? events.filter(e => e.event === 'route').map(e => `- ${e.from}: ${e.subject}${e.body ? ` (${e.body})` : ''}`) : ['- None.']),
     '', '## Conflict candidates', ...(conflicts.length ? conflicts : ['- No overlapping recorded file edits. Bash side effects require manual review.']), ''];
   const path = join(teamDir(team.id), 'summary.md');
   writeAtomic(path, lines.join('\n'));

@@ -16,6 +16,7 @@ import { herdrStatus } from './herdr-status.ts';
 import { participant, type ParticipantRuntime } from './participant.ts';
 import { authGaps, candidates, childEntry, generateAgents, imageDisabled, presetCatalog, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
 import { mainMode } from './main.ts';
+import { registerLeadRoute } from './lead-route.ts';
 import { leadCompaction } from './compact.ts';
 import { routeCommand, teamTarget, type RouteTarget } from './routing.ts';
 import { routesView } from './routes-view.ts';
@@ -305,6 +306,7 @@ export default async function piTeam(pi: ExtensionAPI) {
       pi.appendEntry('pi-team-lead-level', { level: leadLevel });
     });
     leadLevelRef = () => leadLevel;
+    registerLeadRoute(pi, team, () => leadLevel);
     registerModels(pi, presets, lead.routed, { leadLevel: () => leadLevel });
     leadCompaction(pi, Number(process.env.PI_TEAM_LEAD_COMPACT_TOKENS ?? 200_000));
     watchDirectWork(pi);
@@ -314,7 +316,7 @@ export default async function piTeam(pi: ExtensionAPI) {
     pi.on('session_start', () => { try { syncHerdrLabel(getTeam(team.id) ?? team); } catch { /* display only */ } });
     guardDelegation(pi, team, presets, registerRoleAgents(pi, team, presets));
     if (orchestrator.tools || orchestrator.readOnly) pi.on('session_start', () => {
-      const allowed = orchestrator.tools && new Set([...orchestrator.tools, 'subagents_enable', 'subagent', 'team_peers', 'team_send', 'team_inbox', 'team_wait', 'team_report', 'team_skills']);
+      const allowed = orchestrator.tools && new Set([...orchestrator.tools, 'subagents_enable', 'subagent', 'team_peers', 'team_send', 'team_inbox', 'team_wait', 'team_report', 'team_skills', 'team_route']);
       const available = allowed ? pi.getAllTools().map(t => t.name).filter(t => allowed.has(t)) : pi.getActiveTools();
       pi.setActiveTools(available.filter(t => !orchestrator.readOnly || (t !== 'write' && t !== 'edit')));
     });
@@ -374,7 +376,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         return show(ctx, presetView(catalog.presets, ctx, args.split(/\s+/)[1], catalog));
       }
       if (main && verb === 'main') { const output = await main.command(args, ctx); refresh(); return show(ctx, output); }
-      if (verb === 'effort' || verb === 'model' || verb === 'routes') {
+      if (verb === 'effort' || verb === 'model' || verb === 'routes' || (verb === 'preset' && /^(?:use|reset)\b/.test(args))) {
         const target = (id?: string) => {
           if (team && (!id || id === team.id)) return teamTarget(team.id, true);
           if (id) return teamTarget(id);
@@ -460,7 +462,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         pi.sendMessage({ customType: 'pi-team-summary', content: summary, display: true, details: { team: args } }, { deliverAs: 'nextTurn' });
         return show(ctx, `Queued ${args} summary for the next user turn (no model request).`);
       }
-      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | send <address> <body> | routes | effort <role|all> <level|reset> | model <role|all> <model|reset> [--team <id>] | clean [team] [--yes] | cache${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | resume <team> | close <team>'}`);
+      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | preset use <preset>|reset [--team <id>] | send <address> <body> | routes | effort <role|all> <level|reset> | model <role|all> <model|reset> [--team <id>] | clean [team] [--yes] | cache${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | resume <team> | close <team>'}`);
     } catch (e) { if (ctx.hasUI) ctx.ui.notify(e instanceof Error ? e.message : String(e), 'error'); else throw e; }
   } });
 }

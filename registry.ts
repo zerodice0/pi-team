@@ -97,7 +97,7 @@ export interface Participant {
 export interface FleetEntry { key: string; agent: string; model?: string; startedAt?: number; tokens?: { total?: number } }
 export interface Snapshot { at: number; members: Participant[]; fleet: FleetEntry[] }
 export interface LedgerEntry {
-  event: 'sent' | 'delivered' | 'replied' | 'closed' | 'undelivered' | 'fallback';
+  event: 'sent' | 'delivered' | 'replied' | 'closed' | 'undelivered' | 'fallback' | 'route';
   at: number; id?: string; from?: string; to?: string; replyTo?: string; subject?: string; body?: string;
   model?: string; reason?: string; sideEffects?: boolean; until?: number;
 }

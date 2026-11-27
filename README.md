@@ -65,6 +65,7 @@ export PI_CACHE_RETENTION=long
 | `/team routes [--team <id>] [--text]` | 라우터 설정 화면을 엽니다. 역할마다 다음 요청이 갈 모델·effort(NEXT), 예비 후보(FALLBACK), 지금 실행 중인 구성원의 모델(RUNNING)을 보여 주고, 임시 조정한 역할은 주황색입니다. `↑↓` 역할, `←→` effort 한 단계, `m` 모델 고르기(이 호스트에서 로그인된 모델만), `r` 역할 되돌리기, `R` 전체 되돌리기, `tab` 대상 전환(메인 모드와 팀들), `esc` 닫기입니다. 바꾼 값은 바로 저장되어 다음 요청부터 적용됩니다. 팀장처럼 구성원 알림과 우편으로 턴이 이어지는 중이어도, 바꾼 뒤 첫 요청에서 새 모델로 옮깁니다(이때 프롬프트 캐시를 한 번 새로 씁니다). 팀장이 아직 새 설정으로 요청하지 않았으면 팀 패널과 board는 팀장 모델 자리에 `→ opus-5-5·medium`처럼 다음 모델을 주황색으로 보여 줍니다. `--text`나 print 모드에서는 표를 출력합니다. |
 | `/team effort <role\|all> <level\|reset> [--team <id>]` | 역할의 effort(thinking 수준)를 임시로 바꿉니다. preset 파일은 바꾸지 않으며 다음 요청부터 적용됩니다. 팀장 세션의 `orchestrator`와 메인 모드의 `orchestrator`는 그 세션의 thinking 수준 자체를 바꾸며, 팀장 세션에서는 같은 값을 팀 override에도 저장합니다. |
 | `/team model <role\|all> <provider/model[:level] 또는 별칭[:level]\|reset> [--team <id>]` | 역할이 가장 먼저 시도할 모델을 임시로 지정합니다(예: `opus:high`). 원래 후보는 그 뒤의 예비로 남습니다. 메인 모드의 `orchestrator`는 메인 모델을 바로 바꿉니다. |
+| `/team preset use <preset>\|reset [--team <id>]` | 팀의 모든 역할을 다른 preset의 같은 역할 후보 모델로 보냅니다(예: advanced 팀을 mix 모델로). 팀의 preset, 구성원 이름, 역할의 도구·스킬·프롬프트는 그대로 두고, 역할별 모델·effort 임시 조정은 지웁니다. 새 preset에 없는 역할은 원래 모델을 씁니다. 실행 중인 구성원은 다음 요청부터 옮깁니다. `reset`은 팀 preset의 모델로 되돌립니다. 메인 모드에서는 `/team main <preset>`을 씁니다. |
 | `/team preset show [preset]` · `/team alias show` | preset(설명, 후보별 로그인·cooldown 상태, 잘못된 preset의 이유)과 별칭을 보여 줍니다. |
 
 ## 설정 파일
@@ -191,6 +192,8 @@ pi-team은 팀장과 구성원이 실행될 때마다 `~/.pi/agent/teams/stats/<
 - **assign candidates:** 목록에 없는데 구성원이 직접 찾아 읽은 스킬. 역할에 넣는 것을 검토합니다.
 
 presets는 자동으로 바꾸지 않습니다. 결과를 보고 사용자가 고칩니다.
+
+팀장은 `team_route` 도구로 `/team routes`와 같은 일을 합니다. `show`로 역할별 다음 모델·예비 후보·실행 중인 구성원을 보고(preset 파일을 읽지 않습니다), `model`·`effort`로 역할 하나나 전체를, `preset`으로 다른 preset의 모델 배치를 적용합니다. 사용자가 요청한 변경은 사용자 원문을 `approval`로 넘겨야 하며, pi-team은 그 문구가 팀장 세션의 사용자 메시지나 메인 세션이 보낸 우편에 실제로 있는지 확인합니다. 승인 없이 팀장 판단만으로는 역할의 effort를 낮추거나, 그 역할의 후보 안에 있는 모델을 같거나 낮은 effort로 앞에 두는 것만 할 수 있습니다. preset 적용과 되돌리기는 항상 승인이 필요합니다. 변경은 사용자에게 한 줄 알림으로 보이고, 누가 어떤 근거로 바꿨는지 팀 ledger에 남아 `summary.md`의 「Routing changes」에 실립니다. 사용자가 `/team routes`·`/team model`·`/team effort`·`/team preset`으로 바꾼 것도 같이 기록됩니다.
 
 팀장은 `team_skills` 도구로 설치된 스킬을 검색합니다. 결과에는 스킬 크기와 해당 역할의 과거 읽힘 비율이 함께 나옵니다. 필요한 구성원 한 명에게만 `subagent`의 `skill` 옵션으로 스킬을 더해 줍니다. 이 목록은 역할의 기본 스킬을 대체하므로 기본 스킬도 함께 넘깁니다. 팀 실행 중에는 새 스킬을 설치하지 않습니다. 새 스킬은 `npx skills find <키워드>`로 찾아 사용자 승인 뒤 `npx skills add`로 설치합니다.
 

@@ -271,7 +271,7 @@ export function candidates(models: string[], registry: ExtensionContext["modelRe
   });
 }
 interface RouteState { override?: string }
-const overrideKey = (o?: { model?: string; level?: string }) => o?.model || o?.level ? `${o.model ?? ''}|${o.level ?? ''}` : '';
+const overrideKey = (o?: { model?: string; level?: string; models?: string[] }) => o?.model || o?.level || o?.models?.length ? `${o.model ?? ''}|${o.level ?? ''}|${o.models?.join(',') ?? ''}` : '';
 // leadLevel: in a lead, the thinking level pi selected at start. When the user picks another one
 // (shift+tab, /thinking), the orchestrator follows it instead of the candidate's level.
 export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (model: string, fallback: boolean, level: ThinkingLevel) => void, options: { skipOrchestrator?: boolean; leadLevel?: () => ThinkingLevel | undefined } = {}) {

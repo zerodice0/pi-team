@@ -58,7 +58,7 @@ export async function routesView(pi: ExtensionAPI, ctx: ExtensionContext, target
             for (const [i, r] of rows.slice(offset, offset + room).entries()) {
               const at = offset + i;
               const chosen = r.steps.find(s => s.chosen);
-              const changed = !!(r.override?.level || r.override?.model);
+              const changed = !!(r.override?.level || r.override?.model || r.override?.preset);
               const nowTone: Tone = !chosen ? 'crit' : changed ? 'warn' : 'name';
               const back = r.steps.filter(s => !s.chosen).map(s => `${short(s.key)}·${s.level}${!s.usable ? ' (no auth)' : s.cooling ? ' (cooling)' : ''}`).join(' → ') || '—';
               const rail: Segment = at === selected ? ['▌ ', 'title'] : ['  '];
