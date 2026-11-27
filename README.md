@@ -31,7 +31,11 @@ pi install ./pi-team
 npm i --prefix ~/.pi/agent/teams/vendor pi-codex-image-gen@0.3.2
 ```
 
-선택: 팀장과 구성원은 pi-team이 캐시 보존을 정하지만, 메인 세션은 셸의 `PI_CACHE_RETENTION`을 따릅니다(pi에는 이 값을 정하는 설정 키가 없습니다). 메인 세션도 5분 넘게 쉬는 일이 잦다면 셸에 지정합니다. 메인 세션은 pi의 유휴 캐시 데우기가 동작하므로 필수는 아닙니다.
+선택: 팀장과 구성원은 pi-team이 캐시 보존을 정하지만, 메인 세션은 셸의 `PI_CACHE_RETENTION`을 따릅니다(pi에는 이 값을 정하는 설정 키가 없습니다). 메인 세션도 5분 넘게 쉬는 일이 잦다면 셸에 지정하거나 `~/.pi/agent/teams/main.json`에 `"cacheRetention": "long"`을 넣습니다. 메인 세션은 pi의 유휴 캐시 데우기가 동작하므로 필수는 아닙니다. 셸에 두 값(`PI_CACHE_RETENTION`, `PI_SUBAGENT_CACHE_RETENTION`)이 모두 없으면, 그 호스트에서 처음 메인 세션을 시작할 때 한 번 안내합니다(기록: `~/.pi/agent/teams/notices.json`). `/team cache`는 지금 세션의 값과 출처, `main.json` 값, 새 팀장과 구성원이 받을 값, 그리고 이 세션·현재 저장소 팀장·최근 구성원 3명의 최근 캐시 쓰기 20회 가운데 1시간 캐시(`cacheWrite1h`)를 쓴 비율을 보여 줍니다. 적용 여부는 세션 기록의 이 값으로 판단합니다(macOS의 `ps eww`는 다른 프로세스의 환경을 보여 주지 않습니다).
+
+우선순위는 다음과 같습니다.
+- 메인 세션: 셸 환경 변수 → `main.json`의 `cacheRetention`·`subagentCacheRetention` → pi 기본값(5분). `main.json`에 `cacheRetention`만 있으면 메인 세션의 서브에이전트는 `short`가 됩니다. `main.json`은 메인 모드를 켰는지와 관계없이 그 호스트의 모든 메인 세션에 적용됩니다.
+- 팀장과 구성원: 셸 환경 변수 → pi-team 기본값(팀장 `long`, 구성원 `short`). `main.json` 값은 팀장과 구성원에게 넘어가지 않습니다.
 
 ```sh
 # fish
@@ -54,6 +58,7 @@ export PI_CACHE_RETENTION=long
 | `/team collect <team>` | 팀 요약을 메인 세션으로 가져옵니다. 모델은 실행하지 않습니다. |
 | `/team close <team> [--confirm-unmerged]` | worktree를 정리합니다. 병합되지 않은 branch는 지우지 않습니다. worktree의 `artifacts/`는 팀 archive(`teams/archive/<team>/artifacts/`)로 옮겨 남기고, 그 밖의 커밋하지 않은 변경이 있으면 닫지 않습니다. |
 | `/team resume <team>` | 프로세스가 끝난 팀장(잠자기, 충돌, 닫힌 pane)을 마지막 세션으로 다시 띄웁니다. 팀 pane이 셸 프롬프트에 있으면 그 pane에서 실행하고, 다른 프로세스가 돌고 있으면 실행할 명령만 보여 줍니다. 팀장은 `PI_TEAM_ROLE=lead`와 `PI_TEAM_ID`가 있어야 팀장으로 뜨므로, 팀 pane에서 그냥 `pi`로 세션을 재개하면 팀장이 아니라 일반 메인 세션이 됩니다. 이렇게 시작한 세션에는 경고가 뜹니다. |
+| `/team cache` | 캐시 보존 설정과 최근 턴의 1시간 캐시 사용을 보여 줍니다(아래 「설치」의 캐시 설정 참고). |
 | `/team clean [team] [--yes]` | 팀을 연 채로 다시 만들 수 있는 빌드 산출물만 지웁니다. 대상은 Git이 무시하고 추적 파일이 없는 `build`, `.build`, `.dart_tool`, `DerivedData`, `Pods`, `node_modules`, `.gradle`, `.cxx`, `target`, `dist`, `.next`, `.turbo`, `.expo`, `.svelte-kit` 폴더입니다(깊이 4까지, `artifacts/` 제외). 목록과 크기를 보여 주고 확인을 받은 뒤 지웁니다. `config/app.env`처럼 무시되는 설정 파일은 건드리지 않습니다. 작업 중인 구성원이 있으면 거절합니다. 팀장 세션에서는 팀을 생략할 수 있습니다. |
 | `/team main [<preset>\|off] [--default]` | 메인 모드를 켜거나 끄고, 인자가 없으면 상태를 보여 줍니다. `--default`는 이 호스트의 새 세션에 적용할 기본값을 저장하거나 지웁니다. |
 | `/team routes [--team <id>] [--text]` | 라우터 설정 화면을 엽니다. 역할마다 다음 요청이 갈 모델·effort(NEXT), 예비 후보(FALLBACK), 지금 실행 중인 구성원의 모델(RUNNING)을 보여 주고, 임시 조정한 역할은 주황색입니다. `↑↓` 역할, `←→` effort 한 단계, `m` 모델 고르기(이 호스트에서 로그인된 모델만), `r` 역할 되돌리기, `R` 전체 되돌리기, `tab` 대상 전환(메인 모드와 팀들), `esc` 닫기입니다. 바꾼 값은 바로 저장되어 다음 요청부터 적용됩니다. 팀장처럼 구성원 알림과 우편으로 턴이 이어지는 중이어도, 바꾼 뒤 첫 요청에서 새 모델로 옮깁니다(이때 프롬프트 캐시를 한 번 새로 씁니다). 팀장이 아직 새 설정으로 요청하지 않았으면 팀 패널과 board는 팀장 모델 자리에 `→ opus-5-5·medium`처럼 다음 모델을 주황색으로 보여 줍니다. `--text`나 print 모드에서는 표를 출력합니다. |

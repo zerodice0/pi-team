@@ -8,6 +8,7 @@ import { realpathSync } from 'node:fs';
 import { aliasHints, delegate, readTargets, resolveTarget, showAliases, startNamed, type TeamTargets } from './aliases.ts';
 import { board, status, widget } from './board.ts';
 import { cacheRetention, closeTeam, findSummary, memberCacheRetention, parseStart, refreshLeadPrompt, relaunchAsLead, report, resumeLead, retitle, roleList, splitGoal, syncHerdrLabel } from './lifecycle.ts';
+import { applyMainCache, cacheNotice, cacheReport, shellCache } from './cache.ts';
 import { ago, cachedUsage, diskUsage, measure, removeRebuildable, size, staleTeams, usageLine } from './disk.ts';
 import { registerMailbox, send, sendParams } from './mailbox.ts';
 import { teamPanel } from './panel.ts';
@@ -21,7 +22,7 @@ import { routesView } from './routes-view.ts';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import { skillCatalog, skillSize } from './skills.ts';
 import { backfillStats, directWork, loadStats, retroAsk, retroReport, roleSkills, statsReport, trackRun, writeRetro } from './stats.ts';
-import { errorCode, getLead, getTeam, git, isLive, members, teamDir, teams, teamTitle, text, writeJson, type FleetEntry, type Team } from './registry.ts';
+import { errorCode, getLead, getTeam, git, isLive, members, scopedTeams, teamDir, teams, teamTitle, text, writeJson, type FleetEntry, type Team } from './registry.ts';
 
 interface Registration { dispose(): void }
 interface RequiredExtensionAPI {
@@ -244,13 +245,15 @@ export default async function piTeam(pi: ExtensionAPI) {
     registerMainLoader(pi, refresh, targets, configCwd);
     generateAgents(presets);
   }
+  if (!team) applyMainCache();
   if (!team) pi.on('session_start', async (event, ctx) => {
     const restored = leadSessionOf(ctx.sessionManager.getSessionFile());
     if (restored) {
       // pi-ai reads PI_CACHE_RETENTION on every request, so this keeps the lead's large context on the
       // 1-hour cache even if the user stays in this session.
-      process.env.PI_CACHE_RETENTION ||= cacheRetention();
-      process.env.PI_SUBAGENT_CACHE_RETENTION ||= memberCacheRetention();
+      // The shell's values win; main.json's (main sessions only) must not apply to a lead's conversation.
+      if (!shellCache.lead) process.env.PI_CACHE_RETENTION = cacheRetention();
+      if (!shellCache.member) process.env.PI_SUBAGENT_CACHE_RETENTION = memberCacheRetention();
       const pane = process.env.HERDR_PANE_ID;
       if (ctx.hasUI && pane && process.env.HERDR_ENV === '1') {
         const ok = await ctx.ui.confirm(`Restart as the lead of ${restored.id}?`,
@@ -262,6 +265,7 @@ export default async function piTeam(pi: ExtensionAPI) {
       }
     }
     if (ctx.hasUI) for (const [text, level] of startNotes(ctx, event.reason)) ctx.ui.notify(text, level);
+    if (ctx.hasUI && !restored && event.reason === 'startup') { const note = cacheNotice(); if (note) ctx.ui.notify(note, 'info'); }
   });
   let state: ParticipantRuntime | undefined;
   let leadLevelRef: (() => ThinkingLevel | undefined) | undefined;
@@ -427,6 +431,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         if (!id || /\s/.test(id)) throw new Error('Usage: /team resume <team>');
         const output = resumeLead(id); refresh(); return show(ctx, output);
       }
+      if (verb === 'cache' && !args.trim()) return show(ctx, cacheReport(ctx.sessionManager.getSessionFile(), team ? [team] : scopedTeams(ctx.cwd).here));
       if (verb === 'clean') {
         const words = args.split(/\s+/).filter(Boolean);
         const yes = words.includes('--yes');
@@ -453,7 +458,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         pi.sendMessage({ customType: 'pi-team-summary', content: summary, display: true, details: { team: args } }, { deliverAs: 'nextTurn' });
         return show(ctx, `Queued ${args} summary for the next user turn (no model request).`);
       }
-      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | send <address> <body> | routes | effort <role|all> <level|reset> | model <role|all> <model|reset> [--team <id>] | clean [team] [--yes]${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | resume <team> | close <team>'}`);
+      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | send <address> <body> | routes | effort <role|all> <level|reset> | model <role|all> <model|reset> [--team <id>] | clean [team] [--yes] | cache${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | resume <team> | close <team>'}`);
     } catch (e) { if (ctx.hasUI) ctx.ui.notify(e instanceof Error ? e.message : String(e), 'error'); else throw e; }
   } });
 }

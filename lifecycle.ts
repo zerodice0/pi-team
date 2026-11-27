@@ -85,12 +85,16 @@ export function dirtyState(repo: string) {
 // Anthropic keeps a prompt cache for five minutes by default. A lead that waits longer for its members
 // rewrites its whole context on every wake, and pi's idle cache warming does not run for the team's
 // virtual models, so ask for the one-hour cache unless the user chose a retention already.
-export const cacheRetention = () => process.env.PI_CACHE_RETENTION || 'long';
+// Read once at load, from the shell: main.json's cacheRetention (applied later, for the main session
+// itself) must not leak into the leads and members that session starts.
+const shellLead = process.env.PI_CACHE_RETENTION;
+const shellMember = process.env.PI_SUBAGENT_CACHE_RETENTION;
+export const cacheRetention = () => shellLead || 'long';
 // Members get the 5-minute cache unless the user set PI_SUBAGENT_CACHE_RETENTION. On macbook's 105
 // member sessions (11-27) the 1-hour premium (about 5.2M input-token equivalents) cost more than the
 // rewrites it saved (about 2.2M): members rarely pause past five minutes. Teams whose members wait
 // long (device runs, long builds) can set long.
-export const memberCacheRetention = () => process.env.PI_SUBAGENT_CACHE_RETENTION || 'short';
+export const memberCacheRetention = () => shellMember || 'short';
 const leanLead = [
   'Keep your own context small; it is re-read on every turn. Members do the reading, building and checking:',
   '- Do not read source files, logs or long documents to review or verify work, and do not run builds, tests or captures yourself. Ask a member (scout, reviewer, qa-tester, vision) and work from its summary.',
