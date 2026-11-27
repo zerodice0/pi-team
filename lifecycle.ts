@@ -1,4 +1,5 @@
 import { cpSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { cachedUsage, size } from './disk.ts';
 import { dirname, basename, isAbsolute, join, relative, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -85,6 +86,11 @@ export function dirtyState(repo: string) {
 // rewrites its whole context on every wake, and pi's idle cache warming does not run for the team's
 // virtual models, so ask for the one-hour cache unless the user chose a retention already.
 export const cacheRetention = () => process.env.PI_CACHE_RETENTION || 'long';
+// Members get the 5-minute cache unless the user set PI_SUBAGENT_CACHE_RETENTION. On macbook's 105
+// member sessions (11-27) the 1-hour premium (about 5.2M input-token equivalents) cost more than the
+// rewrites it saved (about 2.2M): members rarely pause past five minutes. Teams whose members wait
+// long (device runs, long builds) can set long.
+export const memberCacheRetention = () => process.env.PI_SUBAGENT_CACHE_RETENTION || 'short';
 const leanLead = [
   'Keep your own context small; it is re-read on every turn. Members do the reading, building and checking:',
   '- Do not read source files, logs or long documents to review or verify work, and do not run builds, tests or captures yourself. Ask a member (scout, reviewer, qa-tester, vision) and work from its summary.',
@@ -164,7 +170,7 @@ function leadCommand(team: Team, presets: Presets, tail: string[]) {
   const orchestrator = presets[team.preset].orchestrator;
   const extra = orchestrator.extensions?.flatMap(path => ['--extension', path]) ?? [];
   const skillArgs = leadSkillArgs(orchestrator.skills, team.worktree);
-  return ['env', `PI_TEAM_ID=${team.id}`, 'PI_TEAM_ROLE=lead', `PI_CACHE_RETENTION=${cacheRetention()}`, 'pi', '--model', `team/${team.preset}.orchestrator`,
+  return ['env', `PI_TEAM_ID=${team.id}`, 'PI_TEAM_ROLE=lead', `PI_CACHE_RETENTION=${cacheRetention()}`, `PI_SUBAGENT_CACHE_RETENTION=${memberCacheRetention()}`, 'pi', '--model', `team/${team.preset}.orchestrator`,
     '--append-system-prompt', leadPromptPath(team.id), ...skillArgs, ...extra, ...tail].map(quote).join(' ');
 }
 // rename within a disk, copy and remove across disks (worktrees and ~/.pi can sit on different volumes).
@@ -179,17 +185,31 @@ function moveTree(from: string, to: string) {
 const shells = new Set(['fish', 'bash', 'zsh', 'sh', 'dash', 'ksh', 'tcsh', 'nu', '-fish', '-bash', '-zsh', '-sh']);
 // Bring back a lead whose process ended (sleep, crash, closed pane) on its own session, so it keeps
 // its conversation. In its Herdr pane when that pane sits at a shell prompt; otherwise print the command.
-export function resumeLead(id: string) {
+// The shell command that brings the lead back on its last session (or the worktree's latest one).
+export function resumeCommand(id: string, ignorePid?: number) {
   const team = getTeam(id);
   if (!team) throw new Error(`Unknown team: ${id}`);
   const lead = getLead(id);
-  if (isLive(lead) && lead!.state !== 'stopped') throw new Error(`The lead of ${id} is already running (PID ${lead!.pid}).`);
+  if (isLive(lead) && lead!.state !== 'stopped' && lead!.pid !== ignorePid) throw new Error(`The lead of ${id} is already running (PID ${lead!.pid}).`);
   if (!exists(team.worktree)) throw new Error(`The worktree of ${id} is gone: ${team.worktree}`);
   const presets = readPresets(team.worktree, id);
   if (!presets[team.preset]) throw unknownPreset(team.worktree, team.preset);
   refreshLeadPrompt(team, presets);
   const session = lead?.sessionFile && exists(lead.sessionFile) ? ['--session', lead.sessionFile] : ['--continue'];
-  const command = `cd ${quote(team.worktree)} && ${leadCommand(team, presets, session)}`;
+  return { team, session, command: `cd ${quote(team.worktree)} && ${leadCommand(team, presets, session)}` };
+}
+// Herdr restores a pane after a reboot or a server restart with a bare `pi --session <file>`: no team
+// env, no lead prompt, no 1-hour cache. On 11-27 such a restored lead rewrote 250-364k tokens after
+// every pause over five minutes. From inside that session: wait for this pi to exit, then run the lead
+// command in the same pane, which is back at its shell prompt by then.
+export function relaunchAsLead(id: string, pane: string) {
+  const { command } = resumeCommand(id, process.pid);
+  const script = 'while kill -0 "$1" 2>/dev/null; do sleep 0.3; done; sleep 0.7; herdr pane run "$2" "$3"';
+  spawn('sh', ['-c', script, 'pi-team-relaunch', String(process.pid), pane, command], { detached: true, stdio: 'ignore' }).unref();
+  return command;
+}
+export function resumeLead(id: string) {
+  const { team, session, command } = resumeCommand(id);
   let blocked = '';
   if (team.pane) {
     try {

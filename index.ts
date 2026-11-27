@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { realpathSync } from 'node:fs';
 import { aliasHints, delegate, readTargets, resolveTarget, showAliases, startNamed, type TeamTargets } from './aliases.ts';
 import { board, status, widget } from './board.ts';
-import { closeTeam, findSummary, parseStart, refreshLeadPrompt, report, resumeLead, retitle, roleList, splitGoal, syncHerdrLabel } from './lifecycle.ts';
+import { cacheRetention, closeTeam, findSummary, memberCacheRetention, parseStart, refreshLeadPrompt, relaunchAsLead, report, resumeLead, retitle, roleList, splitGoal, syncHerdrLabel } from './lifecycle.ts';
 import { ago, cachedUsage, diskUsage, measure, removeRebuildable, size, staleTeams, usageLine } from './disk.ts';
 import { registerMailbox, send, sendParams } from './mailbox.ts';
 import { teamPanel } from './panel.ts';
@@ -21,7 +21,7 @@ import { routesView } from './routes-view.ts';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import { skillCatalog, skillSize } from './skills.ts';
 import { backfillStats, directWork, loadStats, retroAsk, retroReport, roleSkills, statsReport, trackRun, writeRetro } from './stats.ts';
-import { errorCode, getLead, getTeam, git, isLive, members, teamDir, teams, text, writeJson, type FleetEntry, type Team } from './registry.ts';
+import { errorCode, getLead, getTeam, git, isLive, members, teamDir, teams, teamTitle, text, writeJson, type FleetEntry, type Team } from './registry.ts';
 
 interface Registration { dispose(): void }
 interface RequiredExtensionAPI {
@@ -203,6 +203,11 @@ function guardDelegation(pi: ExtensionAPI, team: Team, presets: Presets, active:
 //   lead but runs as a main session: no lead.json, mail, lead prompt or team stats, and its
 //   pi-team.<role> agents are not team members. That is how a restarted lead went unnoticed.
 // - On startup, open teams whose lead has been gone for a day, the ones that fill disks unnoticed.
+// The team whose lead session file this is, when that lead is not running.
+export function leadSessionOf(file?: string) {
+  if (!file) return undefined;
+  return teams().find(t => { const lead = getLead(t.id); return lead?.sessionFile === file && !(isLive(lead) && lead.state !== 'stopped'); });
+}
 export function startNotes(ctx: Pick<ExtensionContext, 'cwd' | 'sessionManager'>, reason: string): [string, 'warning' | 'info'][] {
   const notes: [string, 'warning' | 'info'][] = [];
   const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
@@ -239,7 +244,25 @@ export default async function piTeam(pi: ExtensionAPI) {
     registerMainLoader(pi, refresh, targets, configCwd);
     generateAgents(presets);
   }
-  if (!team) pi.on('session_start', (event, ctx) => { if (ctx.hasUI) for (const [text, level] of startNotes(ctx, event.reason)) ctx.ui.notify(text, level); });
+  if (!team) pi.on('session_start', async (event, ctx) => {
+    const restored = leadSessionOf(ctx.sessionManager.getSessionFile());
+    if (restored) {
+      // pi-ai reads PI_CACHE_RETENTION on every request, so this keeps the lead's large context on the
+      // 1-hour cache even if the user stays in this session.
+      process.env.PI_CACHE_RETENTION ||= cacheRetention();
+      process.env.PI_SUBAGENT_CACHE_RETENTION ||= memberCacheRetention();
+      const pane = process.env.HERDR_PANE_ID;
+      if (ctx.hasUI && pane && process.env.HERDR_ENV === '1') {
+        const ok = await ctx.ui.confirm(`Restart as the lead of ${restored.id}?`,
+          `This is the lead session of team ${restored.id} ("${teamTitle(restored)}"), opened without the team settings, as Herdr does when it restores panes. It runs as a plain session: no team mail or lead prompt, no lead compaction, and members do not belong to the team.\nYes: pi exits and the lead starts again on this session in this pane with the team settings.`);
+        if (ok) {
+          try { relaunchAsLead(restored.id, pane); ctx.ui.notify(`pi-team: restarting as the lead of ${restored.id}...`, 'info'); ctx.shutdown(); return; }
+          catch (e) { ctx.ui.notify(`pi-team: could not restart as the lead: ${e instanceof Error ? e.message : String(e)}`, 'error'); }
+        }
+      }
+    }
+    if (ctx.hasUI) for (const [text, level] of startNotes(ctx, event.reason)) ctx.ui.notify(text, level);
+  });
   let state: ParticipantRuntime | undefined;
   let leadLevelRef: (() => ThinkingLevel | undefined) | undefined;
   if (team) {
