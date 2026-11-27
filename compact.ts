@@ -73,6 +73,11 @@ function turnCompaction(pi: ExtensionAPI, o: Options) {
       const branch = ctx.sessionManager.getBranch();
       const preparation = prepareCompaction(branch, settings);
       if (!preparation || !branch.some(e => e.id === preparation.firstKeptEntryId)) return;
+      // pi-autolearn (compaction:gate) may defer this compaction to run a lesson capture first; a
+      // deferral is not a failure and leaves floor, measure and fresh as they are.
+      const gate = { source: 'pi-team', phase: 'turn_end', defer: false, entries: [] as typeof event.entries };
+      pi.events.emit('compaction:gate', gate);
+      if (gate.defer) return gate.entries.length ? { entries: [...event.entries, ...gate.entries], continue: true } : undefined;
       compacting = true;
       tell(ctx, `pi-team: compacting the ${o.who}'s ${Math.round(tokens / 1000)}k-token context before its next step.`, 'info');
       // Stop on the user's abort or after the timeout, and stop waiting even if the request ignores it.
@@ -108,6 +113,9 @@ function turnCompaction(pi: ExtensionAPI, o: Options) {
     const tokens = usage?.tokens;
     const at = usage?.contextWindow ? o.threshold(usage.contextWindow) : limit;
     if (compacting || !fresh || !(at > 0) || tokens == null || tokens < at) return;
+    const gate = { source: 'pi-team', phase: 'settled', defer: false };
+    pi.events.emit('compaction:gate', gate);
+    if (gate.defer) return;
     compacting = true;
     fresh = false;
     try {
