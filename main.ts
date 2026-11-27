@@ -5,6 +5,7 @@ import { authGaps, candidates, imageDisabled, mainAgentName, recordCooldown, rol
 import { readJson, remove, root, writeJson } from './registry.ts';
 import { readOverrides, routeTable, scopePath } from './overrides.ts';
 import type { RouteTarget } from './routing.ts';
+import { routingGuide } from './lifecycle.ts';
 
 // Main mode: the main session runs on a preset's orchestrator as a fixed physical model (so the
 // thinking level, cache warming and cache stay as usual) and can delegate to that preset's roles
@@ -13,6 +14,10 @@ interface Registration { dispose(): void }
 const entryType = 'pi-team-main';
 const defaultPath = join(root, 'main.json');
 const overflow = /context(?:[ _-]window| length)|too long|maximum context|prompt is too long/i;
+// pi-subagents' toolActivation "auto" shows only its subagents_enable loader, whose description
+// says not to delegate unless the user asks. Turning main mode on is that request, so main mode
+// keeps subagent (and the tools pi-subagents declares with it) active.
+const delegationTools = ['subagent', 'subagent_supervisor', 'bg_wait'];
 
 // Sessions that never left main mode leave their override files behind; drop ones idle for two weeks.
 function pruneOverrides() {
@@ -139,11 +144,26 @@ export function mainMode(pi: ExtensionAPI, load: () => Presets, cwd: string) {
   });
   pi.on('before_agent_start', event => {
     if (!preset || !roles.length) return;
+    const registered = new Set(pi.getAllTools().map(t => t.name));
+    const missing = delegationTools.filter(t => registered.has(t) && !pi.getActiveTools().includes(t));
+    if (missing.length) {
+      pi.setActiveTools([...pi.getActiveTools(), ...missing]);
+      const selected = event.systemPromptOptions.selectedTools;
+      if (selected) for (const t of missing) if (!selected.includes(t)) selected.push(t);
+    }
+    const presets = load();
     event.systemPromptOptions.sections['pi-team-main'] = [
-      `pi-team main mode (${preset}): when the user asks to delegate, or work clearly fits a role, use the subagent tool with one of these agents; each runs that role's preset model.`,
-      ...roles.map(r => `- ${mainAgentName(r)}${load()[preset!]?.[r]?.description ? `: ${load()[preset!][r].description}` : ''}`),
-      'Do not pass model. Give each member a complete brief (goal, scope it may change, done-when checks, report); it cannot see this conversation.',
-    ].join('\n');
+      `pi-team main mode (${preset}): you work with the user directly and lead these agents through the subagent tool; each runs that role's preset model. The user turned this mode on, which authorizes delegating to them without asking each time:`,
+      ...roles.map(r => `- ${mainAgentName(r)}${presets[preset!]?.[r]?.description ? `: ${presets[preset!][r].description}` : ''}`),
+      [
+        'Balance doing and delegating:',
+        '- Do it yourself when it is quick: answering from what you already know, reading one or two known files, a small edit, a single command.',
+        '- Delegate when work spans several steps or files: investigation across code, docs or logs; implementation with builds and tests; review of changes; browser or image checks. Run independent pieces in parallel, and keep your own context for talking with the user.',
+        '- When the goal is unclear, ask the user before delegating.',
+      ].join('\n'),
+      routingGuide(presets, preset, 'pi-team.'),
+      'Do not pass model. Give each member a complete brief (goal, background, scope it may change, done-when checks, what to report); it cannot see this conversation.',
+    ].filter(Boolean).join('\n\n');
   });
   pi.on('tool_call', event => {
     if (event.toolName !== 'subagent') return;

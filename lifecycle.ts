@@ -138,9 +138,10 @@ const routes: [role: string, line: string][] = [
   ['qa-tester', 'qa-tester: to run and check a web UI in a browser.'],
   ['vision', 'vision: to read screenshots and design images; do not open the same images yourself.'],
 ];
-export function routingGuide(presets: Presets, preset: string) {
+// prefix: the agent name before the role; main mode's agents are pi-team.<role>.
+export function routingGuide(presets: Presets, preset: string, prefix = `pi-team.${preset}-`) {
   const roles = presets[preset] ?? {};
-  const lines = routes.filter(([role]) => Object.hasOwn(roles, role)).map(([, line]) => `- pi-team.${preset}-${line}`);
+  const lines = routes.filter(([role]) => Object.hasOwn(roles, role)).map(([, line]) => `- ${prefix}${line}`);
   return lines.length ? `When to use the common roles:\n${lines.join('\n')}` : '';
 }
 export function leadPrompt(team: Team, presets: Presets) {
