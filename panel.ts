@@ -222,6 +222,7 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
   pi.on('session_start', (_e, ctx) => { eventCtx = ctx; });
   pi.on('session_shutdown', () => { eventCtx = undefined; clearInterval(timer); timer = undefined; visible = false; feed.stop(); close?.(); });
   return {
+    toggle,
     command(args: string, ctx: ExtensionContext) {
       if (!ctx.hasUI) throw new Error('The team panel requires interactive Pi.');
       if (args === 'on') show(ctx);

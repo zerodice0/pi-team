@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { Editor, matchesKey, visibleWidth } from '@earendil-works/pi-tui';
+import { Editor, matchesKey, truncateToWidth, visibleWidth, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { join } from 'node:path';
 import { send, type Address } from './mailbox.ts';
 import { findSummary, threads } from './lifecycle.ts';
@@ -298,19 +298,39 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
     };
   }, { overlay: true, overlayOptions: { width: '94%', minWidth: 60, anchor: 'center' } }).finally(() => clearInterval(timer));
 }
-export function widget(pi: ExtensionAPI) {
+// The line above the editor: main mode's preset and the repository's teams. Clicking it (pi-tui passes
+// mouse events only in fullscreen mode) runs onClick, which toggles the team panel.
+export function widget(pi: ExtensionAPI, options: { mainPreset?: () => string | undefined; onClick?: (ctx: ExtensionContext) => void } = {}) {
   let ctx: ExtensionContext | undefined;
   let timer: NodeJS.Timeout | undefined;
   let before = '';
+  let rerender: (() => void) | undefined;
   const refresh = () => {
     if (!ctx?.hasUI) return;
     const active = scopedTeams(ctx.cwd).here;
-    const next = active.map(t => {
+    const teamText = active.map(t => {
       const d = status(t);
       const finished = d.rows.filter(p => ['done', 'failed', 'stopped'].includes(p.state)).length;
       return `${teamIcon(t)} ${clipText(teamTitle(t), 24)} ${d.state === 'done' ? `✓ done (${d.diff})` : `${d.state === 'stale' ? '!' : '▶'} ${finished}/${d.rows.length} ✉${d.sent.length}`}`;
     }).join(' · ');
-    if (next !== before) ctx.ui.setWidget('pi-team', next ? [`teams: ${next}`] : undefined);
+    const preset = options.mainPreset?.();
+    const next = [preset && `team main: ${preset}`, teamText && `teams: ${teamText}`].filter(Boolean).join(' · ');
+    if (next !== before) {
+      if (!next) { ctx.ui.setWidget('pi-team', undefined); rerender = undefined; }
+      else if (!before || !rerender) ctx.ui.setWidget('pi-team', tui => {
+        rerender = () => tui.requestRender();
+        return {
+          render: (width: number) => before ? [truncateToWidth(before, Math.max(0, width - 1))] : [],
+          invalidate() {},
+          handleMouse(event: TuiMouseEvent) {
+            if (event.type !== 'press' || event.button !== 'left' || !ctx || !options.onClick) return undefined;
+            options.onClick(ctx);
+            return { handled: true, render: true };
+          },
+        };
+      });
+      else rerender();
+    }
     before = next;
     if (active.length && !timer) timer = setInterval(safeRefresh, 2000).unref();
     if (!active.length && timer) { clearInterval(timer); timer = undefined; }
@@ -318,6 +338,6 @@ export function widget(pi: ExtensionAPI) {
   const safeRefresh = () => { try { refresh(); } catch (e) { ctx?.ui.notify(String(e), 'warning'); } };
   pi.on('session_start', (_e, c) => { ctx = c; safeRefresh(); });
   pi.on('agent_settled', safeRefresh);
-  pi.on('session_shutdown', () => { if (timer) clearInterval(timer); timer = undefined; ctx = undefined; before = ''; });
+  pi.on('session_shutdown', () => { if (timer) clearInterval(timer); timer = undefined; ctx = undefined; before = ''; rerender = undefined; });
   return safeRefresh;
 }

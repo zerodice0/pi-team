@@ -175,6 +175,7 @@ export function mainMode(pi: ExtensionAPI, load: () => Presets, cwd: string) {
   });
 
   return {
+    preset: () => preset,
     target(cwd: string): RouteTarget | undefined {
       if (!preset) return undefined;
       const presets = load();

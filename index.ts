@@ -237,9 +237,11 @@ export default async function piTeam(pi: ExtensionAPI) {
   const configCwd = team ? cwd : (() => { try { return git(cwd, ['rev-parse', '--show-toplevel']); } catch { return cwd; } })();
   const presets = readPresets(configCwd, team?.id);
   const targets = team ? undefined : readTargets(configCwd, presets);
-  const refresh = widget(pi);
+  const refresh = widget(pi, { mainPreset: () => main?.preset(), onClick: ctx => panel.toggle(ctx) });
   const panel = teamPanel(pi, team?.id);
   const main = targets ? mainMode(pi, () => readPresets(configCwd), configCwd) : undefined;
+  // Main mode restores its preset in its own session_start, which runs before this one.
+  if (main) pi.on('session_start', () => refresh());
   if (targets) {
     registerModels(pi, presets, undefined, { skipOrchestrator: true });
     registerMainLoader(pi, refresh, targets, configCwd);
@@ -371,7 +373,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         const catalog = team ? { presets, descriptions: {}, problems: {} } : presetCatalog(configCwd);
         return show(ctx, presetView(catalog.presets, ctx, args.split(/\s+/)[1], catalog));
       }
-      if (main && verb === 'main') return show(ctx, await main.command(args, ctx));
+      if (main && verb === 'main') { const output = await main.command(args, ctx); refresh(); return show(ctx, output); }
       if (verb === 'effort' || verb === 'model' || verb === 'routes') {
         const target = (id?: string) => {
           if (team && (!id || id === team.id)) return teamTarget(team.id, true);
