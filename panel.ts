@@ -6,7 +6,7 @@ import { activity, clip, divider, edge, fg, glyph, headline, live, modelName, on
 
 export { activity, diffShort, live, oneLine } from './frame.ts';
 import { goalDetail, readJson, root, scopedTeams, writeJson } from './registry.ts';
-import { subagentFeed, subagentLines } from './subagents.ts';
+import { quietAsyncWidget, subagentFeed, subagentLines } from './subagents.ts';
 
 // A non-capturing side panel, so the user can keep typing while teams work.
 // By default it sits below quota-panel.ts (top-right, about ten rows) and shares that
@@ -99,6 +99,7 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
   const rank = (d: Info) => d.team.id === current ? 0 : d.state === 'done' ? 2 : 1;
   // Heartbeats rewrite lead.json and members every two seconds without changing what the panel shows.
   // Ask for a frame only when the drawn content changes; pi still calls render() on every frame it draws.
+  let terminalSize: { columns: number; rows: number } = { columns: 0, rows: 0 };
   let drawnWidth = WIDTH;
   let drawn = '';
   // This session's background subagents. A lead's members are already in its team block.
@@ -122,9 +123,12 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
     cwd = ctx.cwd;
     load();
     feed.start();
+    // While the panel is drawn (not when a small terminal hides it), pi-subagents' widget gives way.
+    quietAsyncWidget(eventCtx ?? ctx, () => visible && !!handle && !!options.visible?.(terminalSize.columns, terminalSize.rows));
     if (handle) handle.setHidden(false);
     else void ctx.ui.custom<void>((tui, _theme, _keys, done) => {
       rerender = () => tui.requestRender();
+      terminalSize = tui.terminal;
       close = () => done();
       const blank: Line = { left: [] };
       return {
@@ -204,13 +208,16 @@ export function teamPanel(pi: ExtensionAPI, current?: string) {
     clearInterval(timer);
     timer = setInterval(load, REFRESH_MS).unref();
   };
-  const hide = () => { visible = false; clearInterval(timer); timer = undefined; feed.stop(); handle?.setHidden(true); };
+  const hide = () => { visible = false; clearInterval(timer); timer = undefined; feed.stop(); handle?.setHidden(true); rerender?.(); };
   const toggle = (ctx: ExtensionContext) => visible ? hide() : show(ctx);
   // ctrl+shift+t needs a terminal that reports modified keys; alt+t works everywhere.
   for (const key of ['ctrl+shift+t', 'alt+t'] as const) {
     pi.registerShortcut(key, { description: 'Toggle the pi-team side panel', handler: async ctx => { if (ctx.hasUI) toggle(ctx); } });
   }
-  pi.on('session_shutdown', () => { clearInterval(timer); timer = undefined; visible = false; feed.stop(); close?.(); });
+  // Contexts from event handlers share the ui object other extensions call; see quietAsyncWidget.
+  let eventCtx: ExtensionContext | undefined;
+  pi.on('session_start', (_e, ctx) => { eventCtx = ctx; });
+  pi.on('session_shutdown', () => { eventCtx = undefined; clearInterval(timer); timer = undefined; visible = false; feed.stop(); close?.(); });
   return {
     command(args: string, ctx: ExtensionContext) {
       if (!ctx.hasUI) throw new Error('The team panel requires interactive Pi.');

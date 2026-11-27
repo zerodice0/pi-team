@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { randomUUID } from 'node:crypto';
 import { ago } from './disk.ts';
 import { clip, glyph, modelName, oneLine, type Line } from './frame.ts';
@@ -127,4 +127,47 @@ export function subagentLines(d: SubData, inner: number, now = Date.now()): Line
     lines.push({ left: [['    '], [mark, tone], [' '], [`${ended.length} ${title}: ${ended.map(r => r.label !== r.agent ? oneLine(r.label) : short(r.agent)).join(', ')}`, 'label']] });
   }
   return lines;
+}
+
+// pi-subagents' under-editor async widget repeats what the panel shows, so it gives way while the
+// panel is on screen. pi-subagents reads its `asyncWidget` setting once and has no runtime switch,
+// and pi has no API to hide another extension's widget, so this wraps the session's shared
+// ctx.ui.setWidget: the widget pi-subagents mounts under its key renders no lines while `hidden()`
+// holds and is otherwise untouched (its updates, mouse folding and dispose still reach it). If a
+// later pi-subagents renames the key, nothing is wrapped and the widget simply stays.
+const ASYNC_WIDGET = 'subagent-async';
+const HOOK = Symbol.for('pi-team.async-widget');
+type Ui = ExtensionContext['ui'] & { [HOOK]?: true };
+type Hidden = () => boolean;
+const shared = globalThis as { [HOOK]?: { hidden: Hidden; mounted: number } };
+// Pass a context from an event handler: its ui is the object every extension's ctx.ui returns. A
+// shortcut's or command's context can carry another copy, and wrapping that one would miss
+// pi-subagents' calls.
+export function quietAsyncWidget(ctx: ExtensionContext, hidden: Hidden) {
+  // A reloaded pi-team replaces the predicate; the wrapper reads whichever is current.
+  const state = shared[HOOK] ??= { hidden, mounted: 0 };
+  state.hidden = hidden;
+  const ui = ctx.ui as Ui;
+  if (!ui[HOOK]) {
+    const original = ui.setWidget.bind(ui) as (key: string, content: unknown, options?: unknown) => void;
+    ui[HOOK] = true;
+    (ui as { setWidget: unknown }).setWidget = (key: string, content: unknown, options?: unknown) => {
+      if (key !== ASYNC_WIDGET || typeof content !== 'function') return original(key, content, options);
+      return original(key, (tui: { requestRender(): void }, theme: unknown) => {
+        const inner = (content as (tui: unknown, theme: unknown) => { render(width: number): string[]; dispose?(): void })(tui, theme);
+        state.mounted++;
+        return new Proxy(inner, {
+          get(target, prop) {
+            if (prop === 'render') return (width: number) => state.hidden() ? [] : target.render(width);
+            if (prop === 'dispose') return () => { state.mounted--; target.dispose?.(); };
+            const value = Reflect.get(target, prop, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      }, options);
+    };
+  }
+  // A widget mounted before the wrapper existed cannot be hidden; drop it so pi-subagents mounts it
+  // again through the wrapper on its next update (it remounts whenever its mounted widget is gone).
+  if (!state.mounted) ui.setWidget(ASYNC_WIDGET, undefined);
 }
