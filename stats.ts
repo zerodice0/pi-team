@@ -42,7 +42,9 @@ export function listedSkills(prompt: string) {
   const entries = [...block.matchAll(/<skill>[\s\S]*?<name>([^<]+)<\/name>[\s\S]*?<location>([^<]+)<\/location>[\s\S]*?<\/skill>/g)];
   return { chars: block.length, skills: entries.map(m => ({ name: m[1].trim(), dir: dirname(m[2].trim()) })) };
 }
-const skillPath = /([^\s"'`]*\/skills\/([^/\s"'`]+)\/SKILL\.md)/;
+// The folder name before SKILL.md names the skill, wherever it lives (skills/, managed-skills.archived-*/)
+// and however the path is written ($S/<name>/SKILL.md in a shell command counts too).
+const skillPath = /([^\s"'`/$]+)\/SKILL\.md/;
 // Work a lead should hand to members: built-in tools that read, search, run or edit. Team, subagent,
 // mailbox and lesson tools are coordination; reading a SKILL.md is how a skill is used.
 const workTools = new Set(['bash', 'read', 'edit', 'write', 'grep', 'find', 'ls']);
@@ -114,7 +116,7 @@ export function trackRun(pi: ExtensionAPI, team: Team, row: () => Participant | 
     if (!stat || (e.toolName !== 'read' && e.toolName !== 'bash')) return;
     const text = e.toolName === 'read' ? String(e.args?.path ?? '') : String(e.args?.command ?? '');
     const byDir = listed.find(s => text.includes(`${s.dir}/SKILL.md`));
-    const name = byDir?.name ?? skillPath.exec(text)?.[2];
+    const name = byDir?.name ?? skillPath.exec(text)?.[1];
     if (name) pending.set(e.toolCallId, { name, turn: stat.turns + 1 });
   });
   pi.on('tool_execution_end', e => {
@@ -222,7 +224,7 @@ function fromSession(team: Team, p: Participant): RunStat | undefined {
         if (c.type === 'toolCall') countTool(stat, c.name, c.arguments);
         if (c.type !== 'toolCall' || (c.name !== 'read' && c.name !== 'bash')) continue;
         const text = c.name === 'read' ? String(c.arguments?.path ?? '') : String(c.arguments?.command ?? '');
-        const name = listed.find(s => text.includes(`${s.dir}/SKILL.md`))?.name ?? skillPath.exec(text)?.[2];
+        const name = listed.find(s => text.includes(`${s.dir}/SKILL.md`))?.name ?? skillPath.exec(text)?.[1];
         if (name) calls.set(c.id, { name, turn: stat.turns });
       }
     } else if (m.role === 'toolResult' && calls.has(m.toolCallId) && !m.isError) {
