@@ -178,14 +178,17 @@ export function resumeLead(id: string) {
   let blocked = '';
   if (team.pane) {
     try {
-      const info = JSON.parse(exec('herdr', ['pane', 'process-info', '--pane', team.pane], team.repo)) as { result?: { process_info?: { foreground_processes?: { name?: string; argv?: string[] }[] } } };
+      // Linux reports argv; macOS reports argv0, and node programs such as pi show up as name "node".
+      type Proc = { name?: string; argv?: string[]; argv0?: string };
+      const info = JSON.parse(exec('herdr', ['pane', 'process-info', '--pane', team.pane], team.repo)) as { result?: { process_info?: { foreground_processes?: Proc[] } } };
       const fg = info.result?.process_info?.foreground_processes ?? [];
-      const busy = fg.filter(p => !shells.has(p.name ?? '') && !shells.has(p.argv?.[0]?.split('/').pop() ?? ''));
+      const program = (p: Proc) => (p.argv0 ?? p.argv?.[0] ?? p.name ?? '').split('/').pop()!;
+      const busy = fg.filter(p => !shells.has(program(p)) && !shells.has(p.name ?? ''));
       if (!busy.length) {
         exec('herdr', ['pane', 'run', team.pane, command], team.repo);
         return `Resuming the lead of ${id} in pane ${team.pane}${session[0] === '--session' ? ' on its last session' : ''}.`;
       }
-      blocked = ` Pane ${team.pane} is running ${busy.map(p => p.argv?.join(' ') || p.name).join(', ')}; exit it first, then run:`;
+      blocked = ` Pane ${team.pane} is running ${busy.map(p => p.argv?.join(' ') || program(p)).join(', ')}; exit it first, then run:`;
     } catch { blocked = ` Pane ${team.pane} is not available; run this in a terminal:`; }
   }
   return `${blocked ? blocked.trim() : `Run this in a terminal to resume the lead of ${id}:`}\n${command}`;
