@@ -8,11 +8,14 @@ import { mkdir, readJson, root, writeJson, type Participant, type Snapshot, type
 // the run cost. Records outlive their teams (teams are archived), so role and skill choices can be
 // judged on what happened rather than guessed again for every team.
 export const statsDir = join(root, 'stats');
-// partial: a read tool call with a limit, or an offset past the first line.
+// partial: a read tool call with a limit or an offset past the first line, or a shell command that
+// does not print the file whole (wc, ls, grep, head, sed -n and the like).
 export interface SkillRead { name: string; turn: number; chars: number; partial?: boolean }
 const partialRead = (tool: string, args: unknown) => {
   const a = args as { offset?: unknown; limit?: unknown } | undefined;
-  return tool === 'read' && ((a?.limit !== undefined && a.limit !== null) || Number(a?.offset ?? 1) > 1);
+  if (tool === 'read') return (a?.limit !== undefined && a.limit !== null) || Number(a?.offset ?? 1) > 1;
+  const command = String((args as { command?: unknown } | undefined)?.command ?? '');
+  return !/\bcat\s[^|;&]*SKILL\.md(?![^;&\n]*\|)/.test(command);
 };
 export interface RunStat {
   v: 1; team: string; preset: string; repo: string; role: string; key: string; sessionId: string;
@@ -50,7 +53,19 @@ export function listedSkills(prompt: string) {
 }
 // The folder name before SKILL.md names the skill, wherever it lives (skills/, managed-skills.archived-*/)
 // and however the path is written ($S/<name>/SKILL.md in a shell command counts too).
-const skillPath = /([^\s"'`/$]+)\/SKILL\.md/;
+const skillPath = /(\$\{?)?([^\s"'`/${}]+)\}?\/SKILL\.md/;
+// `S=/…/toolkit; grep … $S/SKILL.md` names the skill in the variable's value, not in its name: a run
+// was recorded as reading a skill called "S".
+const skillIn = (text: string, listed: { name: string; dir: string }[]) => {
+  const byDir = listed.find(s => text.includes(`${s.dir}/SKILL.md`));
+  if (byDir) return byDir.name;
+  const m = skillPath.exec(text);
+  if (!m) return undefined;
+  if (!m[1]) return m[2];
+  if (!/^[A-Za-z_]\w*$/.test(m[2])) return undefined;
+  const value = new RegExp(`(?:^|[\\s;&(])${m[2]}=["']?([^\\s"';&)]+)`).exec(text)?.[1];
+  return value?.replace(/\/+$/, '').split('/').pop() || undefined;
+};
 // Work a lead should hand to members: built-in tools that read, search, run or edit. Team, subagent,
 // mailbox and lesson tools are coordination; reading a SKILL.md is how a skill is used.
 const workTools = new Set(['bash', 'read', 'edit', 'write', 'grep', 'find', 'ls']);
@@ -122,8 +137,7 @@ export function trackRun(pi: ExtensionAPI, team: Team, row: () => Participant | 
     if (stat && e.toolName === 'skill_skip') stat.skills.skip = String((e.args as { reason?: unknown } | undefined)?.reason ?? '').slice(0, 300);
     if (!stat || (e.toolName !== 'read' && e.toolName !== 'bash')) return;
     const text = e.toolName === 'read' ? String(e.args?.path ?? '') : String(e.args?.command ?? '');
-    const byDir = listed.find(s => text.includes(`${s.dir}/SKILL.md`));
-    const name = byDir?.name ?? skillPath.exec(text)?.[1];
+    const name = skillIn(text, listed);
     if (name) pending.set(e.toolCallId, { name, turn: stat.turns + 1, ...(partialRead(e.toolName, e.args) ? { partial: true } : {}) });
   });
   pi.on('tool_execution_end', e => {
@@ -132,6 +146,8 @@ export function trackRun(pi: ExtensionAPI, team: Team, row: () => Participant | 
     if (!stat || !read || e.isError) return;
     stat.skills.read.push({ ...read, chars: textOf(e.result) });
     if (!stat.skills.listed.includes(read.name)) stat.skills.extra = [...new Set([...(stat.skills.extra ?? []), read.name])];
+    // Saved now, not only when the run settles: a long run's reads show in /team stats while it works.
+    save();
   });
   pi.on('agent_settled', save);
   pi.on('session_shutdown', save);
@@ -149,7 +165,9 @@ export function roleSkills(stats: RunStat[], role: string) {
   const use = (name: string) => uses.get(name) ?? uses.set(name, { name, listed: 0, read: 0, readChars: 0, unlisted: 0 }).get(name)!;
   for (const r of runs) {
     for (const name of r.skills.listed) use(name).listed++;
-    const readNames = new Set(r.skills.read.map(x => x.name));
+    // A skill counts as read when the run read it whole at least once; wc, grep or a line range
+    // alone is not use. Records from before partial reads were marked count as before.
+    const readNames = new Set(r.skills.read.filter(x => !x.partial).map(x => x.name));
     for (const name of readNames) {
       const u = use(name);
       u.read++;
@@ -231,7 +249,7 @@ function fromSession(team: Team, p: Participant): RunStat | undefined {
         if (c.type === 'toolCall') countTool(stat, c.name, c.arguments);
         if (c.type !== 'toolCall' || (c.name !== 'read' && c.name !== 'bash')) continue;
         const text = c.name === 'read' ? String(c.arguments?.path ?? '') : String(c.arguments?.command ?? '');
-        const name = listed.find(s => text.includes(`${s.dir}/SKILL.md`))?.name ?? skillPath.exec(text)?.[1];
+        const name = skillIn(text, listed);
         if (name) calls.set(c.id, { name, turn: stat.turns, ...(partialRead(c.name, c.arguments) ? { partial: true } : {}) });
       }
     } else if (m.role === 'toolResult' && calls.has(m.toolCallId) && !m.isError) {
