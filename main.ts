@@ -169,7 +169,7 @@ export function mainMode(pi: ExtensionAPI, load: () => Presets, cwd: string) {
         '- When the goal is unclear, ask the user before delegating.',
       ].join('\n'),
       routingGuide(presets, preset, 'pi-team.'),
-      'Do not pass model. Give each member a complete brief (goal, background, scope it may change, done-when checks, what to report); it cannot see this conversation.',
+      'Do not pass model. Give each member a complete brief (goal, background, scope it may change, done-when checks, what to report); it cannot see this conversation. It does have this repository\'s AGENTS.md and the user\'s global rules in its own prompt, so do not copy those; and it must read a fitting skill, or say why none fits, before its first command or edit.',
     ].filter(Boolean).join('\n\n');
   });
   pi.on('tool_call', event => {

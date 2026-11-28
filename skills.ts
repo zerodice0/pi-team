@@ -1,5 +1,5 @@
 import { getAgentDir, loadSkills, type Skill } from '@earendil-works/pi-coding-agent';
-import { readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,15 +31,31 @@ export function skillCatalog(cwd: string): Skill[] {
 // pi never loads. Every member gets these, found through skillPath so a project skill wins over a
 // general skill of the same name.
 const repoSkillFolders = ['.omp/skills', '.pi/skills', '.agents/skills'];
-export interface RepoSkills { names: string[]; dirs: string[] }
+export interface RepoSkills { names: string[]; dirs: string[]; root?: string }
 export function repoSkills(root: string): RepoSkills {
   const dirs = repoSkillFolders.map(folder => join(root, folder)).filter(exists);
-  if (!dirs.length) return { names: [], dirs };
+  if (!dirs.length) return { names: [], dirs, root };
   try {
     const skills = loadSkills({ cwd: root, agentDir: getAgentDir(), skillPaths: dirs, includeDefaults: false }).skills
       .filter(s => !s.disableModelInvocation && dirs.some(dir => inside(dir, s.filePath)));
-    return { names: [...new Set(skills.map(s => s.name))], dirs };
-  } catch { return { names: [], dirs }; }
+    return { names: [...new Set(skills.map(s => s.name))], dirs, root };
+  } catch { return { names: [], dirs, root }; }
+}
+// A role's core skills are put into the member's prompt whole, so the member has them from its first
+// turn instead of choosing whether to read them. Names that cannot be found stay listed skills.
+export function coreSkills(names: string[], cwd = homedir()) {
+  const found: { name: string; dir: string; body: string }[] = [];
+  const missing: string[] = [];
+  if (!names.length) return { found, missing };
+  let catalog: Skill[] = [];
+  try { catalog = skillCatalog(cwd); } catch { /* treated as missing below */ }
+  for (const name of names) {
+    const skill = catalog.find(s => s.name === name);
+    let body: string | undefined;
+    try { body = skill && readFileSync(skill.filePath, 'utf8').replace(/^---\n[\s\S]*?\n---\n/, '').trim(); } catch { /* unreadable */ }
+    if (skill && body) found.push({ name, dir: dirname(skill.filePath), body }); else missing.push(name);
+  }
+  return { found, missing };
 }
 export const skillSize = (skill: Skill) => { try { return statSync(skill.filePath).size; } catch { return 0; } };
 export const inside = (root: string, path: string) => { const rel = relative(root, path); return !!rel && !isAbsolute(rel) && !rel.startsWith('..'); };

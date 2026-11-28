@@ -15,7 +15,8 @@ export interface RunStat {
   turns: number; tokens: { input: number; cacheRead: number; cacheWrite: number; output: number }; cost: number; maxContext: number;
   // Tool calls by name, without skill reads. Older records lack it.
   tools?: Record<string, number>;
-  skills: { listed: string[]; listedChars: number; extra?: string[]; read: SkillRead[] };
+  // skip: the member's reason when it declared that no listed skill fits (skill_skip).
+  skills: { listed: string[]; listedChars: number; extra?: string[]; read: SkillRead[]; skip?: string };
   // Members only: headings the lead's brief left out, and headings missing from the member's final report.
   brief?: { chars: number; missing: string[] };
   report?: { chars: number; missing: string[] };
@@ -113,6 +114,7 @@ export function trackRun(pi: ExtensionAPI, team: Team, row: () => Participant | 
   });
   pi.on('tool_execution_start', e => {
     if (stat) countTool(stat, e.toolName, e.args);
+    if (stat && e.toolName === 'skill_skip') stat.skills.skip = String((e.args as { reason?: unknown } | undefined)?.reason ?? '').slice(0, 300);
     if (!stat || (e.toolName !== 'read' && e.toolName !== 'bash')) return;
     const text = e.toolName === 'read' ? String(e.args?.path ?? '') : String(e.args?.command ?? '');
     const byDir = listed.find(s => text.includes(`${s.dir}/SKILL.md`));
@@ -282,6 +284,7 @@ export function retroReport(teamId: string, all = loadStats()) {
       r.brief ? !inForm(r.brief) ? 'brief not in the standard form' : r.brief.missing.length ? `brief missing ${r.brief.missing.join(', ')}` : '' : '',
       r.report ? silentReport(r.report) ? 'no report' : !formalReport(r.report) ? 'report not in the standard form' : '' : '',
       r.skills.extra?.length ? `looked up unlisted ${r.skills.extra.join(', ')}` : '',
+      r.skills.skip ? `declared no skill fits: ${r.skills.skip}` : '',
       r.role === 'orchestrator' && directCount(r) ? `direct work ${directCount(r)} (${directList(r)})` : '',
     ].filter(Boolean);
     lines.push(`- ${r.key} (${r.role}, ${r.state}${r.resumed ? ', resumed' : ''}): ${r.turns} turns, max context ${k(r.maxContext)}, $${r.cost.toFixed(2)}; skills read ${read.join(', ') || 'none'}${unread ? `, ${unread} listed never read` : ''}${flags.length ? `; ${flags.join('; ')}` : ''}`);

@@ -124,8 +124,8 @@ export const intake = [
 export const briefForm = [
   'Every member task uses these headings, in this order, kept short and concrete:',
   '## Goal - one sentence.',
-  '## Background - why, plus the user\'s words quoted verbatim when they matter; a fresh member cannot see this conversation.',
-  '## Read first - exact paths, earlier notes and reports to continue from.',
+  '## Background - why, plus the user\'s words quoted verbatim when they matter; a fresh member cannot see this conversation. Do not copy project rules here: every member has the repository\'s AGENTS.md and the user\'s global rules in its own prompt. Add only what this task changes or decides.',
+  '## Read first - exact paths, earlier notes and reports to continue from. A member must read a fitting skill, or say why none fits, before its first command or edit; when you know which skill the work needs, name it here.',
   '## Do - numbered, highest priority first.',
   '## Do not - write scope (which files or folders it may change), files to leave alone, invariants. Read-only roles: say so.',
   '## Done when - acceptance criteria and how to check them (commands, captures, numbers).',

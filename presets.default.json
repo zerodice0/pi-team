@@ -89,10 +89,10 @@
             "@deep"
           ],
           "description": "2D animation in OpenToonz: scenes, levels and exposure sheets, camera and pegbar keys, GUI save and reopen, tcomposer render and ffmpeg encode with frame evidence",
-          "skills": [
+          "core": [
             "opentoonz-native-animation"
           ],
-          "prompt": "Find the OpenToonz launcher first, where the opentoonz-native-animation skill says to look. If there is none on this host, stop and report it; never substitute another renderer or tool.\nThe launcher pins HOME to its install, so do not start while another OpenToonz or tcomposer process runs (check with pgrep); report it instead.\nCapture and drive only the windows of the GUI process you started, and when you are done end only that PID. Never kill OpenToonz or tcomposer by name.\nA render is a heavy job: one at a time, in the foreground, with -nthreads 1.\nReport the technical result (render finished, output files, frame count) apart from visual acceptance. Do not judge the look yourself; hand over evidence for art-reviewer: a strip of every frame, a clip at normal speed and the key frames at full size, with their paths."
+          "prompt": "Find the OpenToonz launcher first, where your core skill says to look. If there is none on this host, stop and report it; never substitute another renderer or tool.\nThe launcher pins HOME to its install, so do not start while another OpenToonz or tcomposer process runs (check with pgrep); report it instead.\nCapture and drive only the windows of the GUI process you started, and when you are done end only that PID. Never kill OpenToonz or tcomposer by name.\nA render is a heavy job: one at a time, in the foreground, with -nthreads 1.\nReport the technical result (render finished, output files, frame count) apart from visual acceptance. Do not judge the look yourself; hand over evidence for art-reviewer: a strip of every frame, a clip at normal speed and the key frames at full size, with their paths."
         },
         "ui-designer": {
           "models": [

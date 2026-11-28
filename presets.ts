@@ -6,10 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { blenderTools, toolName } from './blender-mcp/extension.ts';
 import { reaTools } from './rea-mcp/extension.ts';
 import { ambientScope, effectiveModels, readOverrides } from './overrides.ts';
-import { roleSkillsDir, type RepoSkills } from './skills.ts';
+import { coreSkills, roleSkillsDir, type RepoSkills } from './skills.ts';
+import { gatedTool, skillSkipTool } from './skill-gate.ts';
 import { exists, locked, log, mkdir, namePattern, names, readJson, readText, remove, root, teamDir, writeAtomic, writeJson } from './registry.ts';
 
-export interface Role { models: string[]; description?: string; skills?: string[]; mcp?: string[]; tools?: string[]; extensions?: string[]; readOnly?: boolean; max?: number; prompt?: string }
+// core: skills put into the member's prompt whole (how the role works at all); skills: listed, read when they fit.
+export interface Role { models: string[]; description?: string; skills?: string[]; core?: string[]; mcp?: string[]; tools?: string[]; extensions?: string[]; readOnly?: boolean; max?: number; prompt?: string }
 // MCP servers a role can ask for by name. Each one is an extension that only that role's members load,
 // so the main session and the lead never start it; the extension registers the server's tools.
 const mcpServers: Record<string, { extension: string; tools: string[]; prompt: string }> = {
@@ -48,6 +50,7 @@ function validate(value: Presets | undefined, relativeTo: string): Presets {
           (details.prompt !== undefined && typeof details.prompt !== 'string') ||
           (details.description !== undefined && (typeof details.description !== 'string' || !details.description.trim() || /[\r\n]/.test(details.description))) ||
           (details.skills !== undefined && (!Array.isArray(details.skills) || details.skills.some(s => typeof s !== 'string' || !/^[\w:.-]+$/.test(s)))) ||
+          (details.core !== undefined && (!Array.isArray(details.core) || details.core.some(s => typeof s !== 'string' || !/^[\w:.-]+$/.test(s)))) ||
           (details.mcp !== undefined && (!Array.isArray(details.mcp) || details.mcp.some(s => typeof s !== 'string' || !Object.hasOwn(mcpServers, s)))) ||
           (details.tools !== undefined && (!Array.isArray(details.tools) || details.tools.some(t => typeof t !== 'string' || !/^[\w:.-]+$/.test(t)))) ||
           (details.extensions !== undefined && (!Array.isArray(details.extensions) || details.extensions.some(p => typeof p !== 'string' || !p || /[\r\n,]/.test(p))))) {
@@ -188,24 +191,40 @@ export const childEntry = fileURLToPath(new URL('./child.ts', import.meta.url));
 // children never load the parent's extensions, so without it team/<preset>.<role> is unknown there.
 export const modelsEntry = fileURLToPath(new URL('./models.ts', import.meta.url));
 export const mainAgentName = (role: string) => `pi-team.${role}`;
+// What a member carries, in three layers with different delivery:
+//  - project rules: the repository's AGENTS.md and the user's global one, always and whole, through
+//    pi-subagents' context inheritance. A custom agent starts without them by default, which left
+//    members changing a project's code without any of its rules.
+//  - role knowledge: core skills in the prompt from the first turn; listed skills chosen before the
+//    first command or edit (skill-gate.ts).
+//  - the task: the brief.
 export function roleAgent(preset: string, role: string, item: Role, mode: 'team' | 'main' = 'team', repo?: RepoSkills) {
   const main = mode === 'main';
-  const skills = [...new Set([...(item.skills ?? []), ...(repo?.names ?? [])])];
+  const core = coreSkills(item.core ?? [], repo?.root);
+  const inlined = new Set(core.found.map(s => s.name));
+  const skills = [...new Set([...(item.skills ?? []), ...core.missing, ...(repo?.names ?? [])])].filter(name => !inlined.has(name));
   const defaults = role === 'image' ? ['read', 'codex_generate_image'] : item.readOnly ? ['read', 'grep', 'find', 'ls'] : ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls'];
   const excludeTools = item.readOnly ? ['write', 'edit'] : [];
   const mcp = item.mcp ?? [];
-  const tools = [...new Set([...(item.tools ?? defaults), ...(main ? [] : mailTools), ...mcp.flatMap(name => mcpServers[name].tools),
+  const base = [...new Set([...(item.tools ?? defaults), ...(main ? [] : mailTools), ...mcp.flatMap(name => mcpServers[name].tools),
     ...(role === 'vision' ? ['read'] : []), ...(role === 'image' ? ['codex_generate_image'] : [])])]
     .filter(tool => !excludeTools.includes(tool));
+  // Roles that only read and search are never held back by the skill choice, so they do not need its tool.
+  const tools = base.some(gatedTool) ? [...base, skillSkipTool] : base;
+  const gated = tools.includes(skillSkipTool);
   const subagentOnlyExtensions = [...new Set([...(main ? [modelsEntry] : []), ...(item.extensions ?? []), ...mcp.map(name => mcpServers[name].extension), ...(role === 'image' ? [imageEntry] : [])])];
+  const lead = main ? 'the main session' : 'the lead';
   const systemPrompt = [
     main
       ? `You are the ${role} member the main session delegated to. Work in the current repository within the scope the brief gives, and give a concise final result.`
       : `You are the ${role} member. Stay inside the team worktree; use team_peers, team_send, team_inbox and team_wait to coordinate. Give the lead a concise final result.`,
+    `Your prompt carries this project's instructions (AGENTS.md files) and the user's global rules. They bind your work as they bind ${lead}: where they and a skill disagree, they win, and a skill the repository ships wins over a general one. You are a member, so you cannot ask the user or delegate: when a rule calls for the user's approval, a question to the user or another agent, do not do that part; ${main ? 'say so in your report' : 'ask the lead with team_send or say so in your report'}. Rules about coordinating panes, sending mail or reporting to the user are ${lead}'s to follow, not yours.`,
+    ...core.found.map(s => `Core skill ${s.name}: this is how you work in this role, so follow it. Its files are in ${s.dir}; resolve its relative paths there.\n\n${s.body}`),
+    gated && skills.length ? `Your listed skills are how this role works, not optional reading. Before your first command, edit or other tool that changes anything, check them against the brief and the project rules and read the SKILL.md of each one that fits with the read tool, starting with any skill the project rules or the brief name for this kind of work; if none fits, call ${skillSkipTool} with the reason. Other tools are refused until then.` : '',
     main
       ? 'Follow the brief\'s Limits: append to the notes file after each step and stop to report before the time box ends, even if unfinished. If the brief leaves a choice open, take the safer option and state it.'
       : 'Follow the brief\'s Limits: append to the notes file after each step and stop to report before the time box ends, even if unfinished. If the brief leaves a choice open, take the safer option and state it; ask the lead with team_send only when a wrong guess would waste the work.',
-    'End with a short report under these headings: Result; Checks (run, with outcome, and not run); Open issues; Changed files (or none); Artifacts (paths). Never report an unrun check as passed.',
+    `End with a short report under these headings: Result; Checks (run, with outcome, and not run); Open issues; Changed files (or none); Artifacts (paths). Never report an unrun check as passed.${gated && (skills.length || core.found.length) ? ' Under Checks, name the skills you followed, or say that none applied.' : ''}`,
     'Keep your context small; it is re-read on every turn. Read large files with line ranges or rg instead of printing whole files, and do not reread a file or image you already have unless it changed. When you are resumed for a follow-up, build on what you already read.',
     role === 'vision' ? 'Use `read` on the supplied image path and describe the actual visual content.' : '',
     role === 'image' ? 'Use codex_generate_image with save="custom", saveDir="artifacts", outputFormat="png". Report the saved PNG path or the exact tool error; do not substitute another image generator.' : '',
@@ -216,7 +235,8 @@ export function roleAgent(preset: string, role: string, item: Role, mode: 'team'
   const description = `pi-team ${preset} ${role} member${item.description ? `: ${item.description.trim()}` : ''}`;
   // Repository folders first, so a project skill wins over pi-team's role skill of the same name.
   const skillPath = [...(repo?.dirs ?? []), ...(exists(roleSkillsDir) ? [roleSkillsDir] : [])];
-  return { description, model: `team/${preset}.${role}`, tools, excludeTools, skills, ...(skillPath.length ? { skillPath } : {}), extensions: [], subagentOnlyExtensions, systemPrompt };
+  return { description, model: `team/${preset}.${role}`, tools, excludeTools, skills, ...(skillPath.length ? { skillPath } : {}), extensions: [], subagentOnlyExtensions, systemPrompt,
+    inheritProjectContext: true, inheritGlobalContext: true };
 }
 export function generateAgents(presets: Presets, target = join(getAgentDir(), 'agents', 'pi-team')) {
   mkdir(target);
@@ -228,7 +248,8 @@ export function generateAgents(presets: Presets, target = join(getAgentDir(), 'a
       const def = roleAgent(preset, role, item);
       const body = ['---', 'package: pi-team', `name: ${preset}-${role}`, `description: ${def.description}`, `model: ${def.model}`,
         `tools: ${def.tools.join(', ')}`, ...(def.excludeTools.length ? [`excludeTools: ${def.excludeTools.join(', ')}`] : []),
-        ...(def.skills.length ? [`skills: ${def.skills.join(', ')}`] : []), ...(def.skillPath ? [`skillPath: ${def.skillPath.join(', ')}`] : []), 'extensions: []',
+        ...(def.skills.length ? [`skills: ${def.skills.join(', ')}`] : []), ...(def.skillPath ? [`skillPath: ${def.skillPath.join(', ')}`] : []),
+        'inheritProjectContext: true', 'inheritGlobalContext: true', 'extensions: []',
         ...(def.subagentOnlyExtensions.length ? [`subagentOnlyExtensions: ${def.subagentOnlyExtensions.map(s => JSON.stringify(s)).join(', ')}`] : []),
         '---', '', managed, '', def.systemPrompt, ''].join('\n');
       live.add(`${role}.md`);

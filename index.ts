@@ -398,9 +398,10 @@ export default async function piTeam(pi: ExtensionAPI) {
           const u = usage?.get(s.name);
           return `- ${s.name} (${Math.round(skillSize(s) / 1000)}k chars${u ? `; ${p.role} read it in ${u.read} of ${Math.max(u.listed, u.read)} runs` : ''}): ${s.description.replace(/\s+/g, ' ').slice(0, 220)}`;
         });
-        const defaults = p.role ? [...new Set([...(roles[p.role].skills ?? []), ...repoSkills(team.worktree).names])] : undefined;
+        const core = p.role ? roles[p.role].core ?? [] : [];
+        const defaults = p.role ? [...new Set([...(roles[p.role].skills ?? []), ...repoSkills(team.worktree).names])].filter(name => !core.includes(name)) : undefined;
         return text([
-          ...(defaults ? [`${p.role} default skills: ${defaults.length ? defaults.join(', ') : 'none'}`] : []),
+          ...(defaults ? [`${p.role} default skills: ${defaults.length ? defaults.join(', ') : 'none'}${core.length ? `; core skills already in its prompt (do not list them): ${core.join(', ')}` : ''}`] : []),
           `${matches.length} installed skills match${matches.length > lines.length ? ` (showing ${lines.length})` : ''}.`, ...lines,
           'To add skills for one member, pass subagent skill: [default skills..., extra skills...]; the list replaces the role defaults. Every listed skill costs its description on each turn and its body once read, so add only what this task needs.',
         ].join('\n'));
