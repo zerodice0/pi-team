@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { mkdir, readJson, root, writeJson, type Participant, type Snapshot, type Team } from './registry.ts';
 
@@ -10,13 +10,24 @@ import { mkdir, readJson, root, writeJson, type Participant, type Snapshot, type
 export const statsDir = join(root, 'stats');
 // partial: a read tool call with a limit or an offset past the first line, or a shell command that
 // does not print the file whole (wc, ls, grep, head, sed -n and the like).
-export interface SkillRead { name: string; turn: number; chars: number; partial?: boolean }
-const partialRead = (tool: string, args: unknown) => {
-  const a = args as { offset?: unknown; limit?: unknown } | undefined;
-  if (tool === 'read') return (a?.limit !== undefined && a.limit !== null) || Number(a?.offset ?? 1) > 1;
-  const command = String((args as { command?: unknown } | undefined)?.command ?? '');
-  return !/\bcat\s[^|;&]*SKILL\.md(?![^;&\n]*\|)/.test(command);
-};
+// docs: how many documents the skill's folder held besides SKILL.md when it was read.
+export interface SkillRead { name: string; turn: number; chars: number; partial?: boolean; docs?: number }
+// A document inside a skill's folder (references/…), which SKILL.md points to for part of the work.
+export interface SkillDoc { name: string; file: string; turn: number; partial?: boolean }
+// Documents of a skill besides SKILL.md, as paths inside its folder.
+export function skillDocs(dir: string, depth = 3): string[] {
+  const walk = (at: string, left: number): string[] => {
+    let names: string[] = [];
+    try { names = readdirSync(at); } catch { return []; }
+    return names.flatMap(n => {
+      const path = join(at, n);
+      let folder = false;
+      try { folder = statSync(path).isDirectory(); } catch { return []; }
+      return folder ? (left > 0 && !n.startsWith('.') ? walk(path, left - 1) : []) : /\.md$/i.test(n) && n !== 'SKILL.md' ? [path] : [];
+    });
+  };
+  return walk(dir, depth).map(p => p.slice(dir.length + 1)).sort();
+}
 export interface RunStat {
   v: 1; team: string; preset: string; repo: string; role: string; key: string; sessionId: string;
   task?: string; startedAt: number; endedAt: number; state: string; resumed: boolean; models: string[];
@@ -24,7 +35,7 @@ export interface RunStat {
   // Tool calls by name, without skill reads. Older records lack it.
   tools?: Record<string, number>;
   // skip: the member's reason when it declared that no listed skill fits (skill_skip).
-  skills: { listed: string[]; listedChars: number; extra?: string[]; read: SkillRead[]; skip?: string };
+  skills: { listed: string[]; listedChars: number; extra?: string[]; read: SkillRead[]; skip?: string; docs?: SkillDoc[] };
   // Members only: headings the lead's brief left out, and headings missing from the member's final report.
   brief?: { chars: number; missing: string[] };
   // skills: listed skills the report's Checks section names, to compare with the reads on record.
@@ -66,18 +77,54 @@ export function listedSkills(prompt: string) {
 }
 // The folder name before SKILL.md names the skill, wherever it lives (skills/, managed-skills.archived-*/)
 // and however the path is written ($S/<name>/SKILL.md in a shell command counts too).
-const skillPath = /(\$\{?)?([^\s"'`/${}]+)\}?\/SKILL\.md/;
+const skillPath = /(\$\{?)?([^\s"'`/${}]+)\}?\/SKILL\.md/g;
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// A shell command prints a file whole when the simple command that names it is a cat without a pipe.
+const printedWhole = (command: string, file: string) => command.split(/&&|\|\||;|\n/).some(part => part.includes(file) && /^\s*cat\s/.test(part) && !part.includes('|'));
+// What one read or bash call opened: skills by their SKILL.md, and documents inside a skill's folder.
+// One command can open several (`cat a/SKILL.md; cat b/SKILL.md b/references/x.md`); each is recorded.
 // `S=/…/toolkit; grep … $S/SKILL.md` names the skill in the variable's value, not in its name: a run
 // was recorded as reading a skill called "S".
-const skillIn = (text: string, listed: { name: string; dir: string }[]) => {
-  const byDir = listed.find(s => text.includes(`${s.dir}/SKILL.md`));
-  if (byDir) return byDir.name;
-  const m = skillPath.exec(text);
-  if (!m) return undefined;
-  if (!m[1]) return m[2];
-  if (!/^[A-Za-z_]\w*$/.test(m[2])) return undefined;
-  const value = new RegExp(`(?:^|[\\s;&(])${m[2]}=["']?([^\\s"';&)]+)`).exec(text)?.[1];
-  return value?.replace(/\/+$/, '').split('/').pop() || undefined;
+export const skillAccess = (tool: string, args: unknown, listed: { name: string; dir: string }[]) => {
+  const a = args as { path?: unknown; command?: unknown; offset?: unknown; limit?: unknown } | undefined;
+  const bash = tool === 'bash';
+  const text = String(bash ? a?.command ?? '' : a?.path ?? '');
+  const ranged = !bash && ((a?.limit !== undefined && a.limit !== null) || Number(a?.offset ?? 1) > 1);
+  const partial = (file: string) => bash ? !printedWhole(text, file) : ranged;
+  const skills = new Map<string, { partial: boolean; dir?: string }>();
+  const docs = new Map<string, { name: string; file: string; partial: boolean }>();
+  const add = (name: string, file: string, dir?: string) => {
+    const now = partial(file);
+    const had = skills.get(name);
+    skills.set(name, { partial: had ? had.partial && now : now, dir: dir ?? had?.dir });
+  };
+  for (const m of text.matchAll(skillPath)) {
+    if (!m[1]) {
+      const known = listed.find(s => basename(s.dir) === m[2]);
+      add(known?.name ?? m[2], `${m[2]}/SKILL.md`, known?.dir);
+      continue;
+    }
+    if (!/^[A-Za-z_]\w*$/.test(m[2])) continue;
+    const value = new RegExp(`(?:^|[\\s;&(])${m[2]}=["']?([^\\s"';&)]+)`).exec(text)?.[1];
+    const folder = value?.replace(/\/+$/, '').split('/').pop();
+    if (folder) add(listed.find(s => basename(s.dir) === folder)?.name ?? folder, m[0]);
+  }
+  // Documents are matched by a listed skill's folder name, so a relative path after `cd skills` counts.
+  for (const s of listed) for (const m of text.matchAll(new RegExp(`(?:^|[\\s/"'\`=])${escape(basename(s.dir))}/([\\w./-]+\\.md)`, 'g'))) {
+    if (basename(m[1]) === 'SKILL.md') continue;
+    docs.set(`${s.name}/${m[1]}`, { name: s.name, file: m[1], partial: partial(`${basename(s.dir)}/${m[1]}`) });
+  }
+  return { skills: [...skills].map(([name, v]) => ({ name, partial: v.partial, dir: v.dir })), docs: [...docs.values()] };
+};
+type Access = ReturnType<typeof skillAccess>;
+const recordAccess = (stat: RunStat, access: Access, turn: number, chars: number) => {
+  const share = Math.round(chars / Math.max(1, access.skills.length + access.docs.length));
+  for (const r of access.skills) {
+    const docs = r.dir ? skillDocs(r.dir).length : 0;
+    stat.skills.read.push({ name: r.name, turn, chars: share, ...(r.partial ? { partial: true } : {}), ...(docs ? { docs } : {}) });
+    if (!stat.skills.listed.includes(r.name)) stat.skills.extra = [...new Set([...(stat.skills.extra ?? []), r.name])];
+  }
+  if (access.docs.length) stat.skills.docs = [...(stat.skills.docs ?? []), ...access.docs.map(d => ({ name: d.name, file: d.file, turn, ...(d.partial ? { partial: true } : {}) }))];
 };
 // Work a lead should hand to members: built-in tools that read, search, run or edit. Team, subagent,
 // mailbox and lesson tools are coordination; reading a SKILL.md is how a skill is used.
@@ -101,7 +148,7 @@ const textOf = (result: unknown) => {
 export function trackRun(pi: ExtensionAPI, team: Team, row: () => Participant | undefined) {
   let stat: RunStat | undefined;
   let listed: { name: string; dir: string }[] = [];
-  const pending = new Map<string, { name: string; turn: number; partial?: boolean }>();
+  const pending = new Map<string, { access: Access; turn: number }>();
   const file = () => stat && join(statsDir, `${stat.team}-${stat.key}-${stat.sessionId.slice(0, 13)}.json`);
   const save = () => {
     const p = row();
@@ -149,16 +196,14 @@ export function trackRun(pi: ExtensionAPI, team: Team, row: () => Participant | 
     if (stat) countTool(stat, e.toolName, e.args);
     if (stat && e.toolName === 'skill_skip') stat.skills.skip = String((e.args as { reason?: unknown } | undefined)?.reason ?? '').slice(0, 300);
     if (!stat || (e.toolName !== 'read' && e.toolName !== 'bash')) return;
-    const text = e.toolName === 'read' ? String(e.args?.path ?? '') : String(e.args?.command ?? '');
-    const name = skillIn(text, listed);
-    if (name) pending.set(e.toolCallId, { name, turn: stat.turns + 1, ...(partialRead(e.toolName, e.args) ? { partial: true } : {}) });
+    const access = skillAccess(e.toolName, e.args, listed);
+    if (access.skills.length || access.docs.length) pending.set(e.toolCallId, { access, turn: stat.turns + 1 });
   });
   pi.on('tool_execution_end', e => {
     const read = pending.get(e.toolCallId);
     pending.delete(e.toolCallId);
     if (!stat || !read || e.isError) return;
-    stat.skills.read.push({ ...read, chars: textOf(e.result) });
-    if (!stat.skills.listed.includes(read.name)) stat.skills.extra = [...new Set([...(stat.skills.extra ?? []), read.name])];
+    recordAccess(stat, read.access, read.turn, textOf(e.result));
     // Saved now, not only when the run settles: a long run's reads show in /team stats while it works.
     save();
   });
@@ -233,7 +278,7 @@ function fromSession(team: Team, p: Participant): RunStat | undefined {
     startedAt: p.startedAt ?? p.at, endedAt: p.at, state: p.state, resumed: false, models: [], turns: 0,
     tokens: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 }, cost: 0, maxContext: 0, skills: { listed: [], listedChars: 0, read: [] } };
   let listed: { name: string; dir: string }[] = [];
-  const calls = new Map<string, { name: string; turn: number; partial?: boolean }>();
+  const calls = new Map<string, { access: Access; turn: number }>();
   for (const line of readFileSync(p.sessionFile, 'utf8').split('\n')) {
     if (!line) continue;
     let e: any;
@@ -261,14 +306,12 @@ function fromSession(team: Team, p: Participant): RunStat | undefined {
       for (const c of m.content ?? []) {
         if (c.type === 'toolCall') countTool(stat, c.name, c.arguments);
         if (c.type !== 'toolCall' || (c.name !== 'read' && c.name !== 'bash')) continue;
-        const text = c.name === 'read' ? String(c.arguments?.path ?? '') : String(c.arguments?.command ?? '');
-        const name = skillIn(text, listed);
-        if (name) calls.set(c.id, { name, turn: stat.turns, ...(partialRead(c.name, c.arguments) ? { partial: true } : {}) });
+        const access = skillAccess(c.name, c.arguments, listed);
+        if (access.skills.length || access.docs.length) calls.set(c.id, { access, turn: stat.turns });
       }
     } else if (m.role === 'toolResult' && calls.has(m.toolCallId) && !m.isError) {
       const read = calls.get(m.toolCallId)!;
-      stat.skills.read.push({ ...read, chars: (m.content ?? []).reduce((n: number, c: any) => n + (c.text?.length ?? 0), 0) });
-      if (!stat.skills.listed.includes(read.name)) stat.skills.extra = [...new Set([...(stat.skills.extra ?? []), read.name])];
+      recordAccess(stat, read.access, read.turn, (m.content ?? []).reduce((n: number, c: any) => n + (c.text?.length ?? 0), 0));
     }
   }
   if (p.role !== 'orchestrator' && ended(p.state)) stat.report = reportCheck(p.error ? undefined : p.result, stat.skills.listed);
@@ -320,6 +363,10 @@ export function retroReport(teamId: string, all = loadStats()) {
     const partly = read.filter(n => r.skills.read.filter(x => x.name === n).every(x => x.partial));
     // A signal to check, not a verdict: the report may name a skill to say it did not apply.
     const unbacked = (r.report?.skills ?? []).filter(n => !r.skills.read.some(x => x.name === n && !x.partial));
+    // Skills read whole whose folder holds documents, none of which the run opened whole. A signal:
+    // SKILL.md decides which documents a task needs, and some tasks need none.
+    const undocumented = read.filter(n => !partly.includes(n) && !(r.skills.docs ?? []).some(d => d.name === n && !d.partial))
+      .map(n => ({ n, docs: Math.max(0, ...r.skills.read.filter(x => x.name === n).map(x => x.docs ?? 0)) })).filter(x => x.docs > 0);
     const flags = [
       r.brief ? !inForm(r.brief) ? 'brief not in the standard form' : r.brief.missing.length ? `brief missing ${r.brief.missing.join(', ')}` : '' : '',
       r.report ? silentReport(r.report) ? 'no report' : !formalReport(r.report) ? 'report not in the standard form' : '' : '',
@@ -327,9 +374,10 @@ export function retroReport(teamId: string, all = loadStats()) {
       r.skills.skip ? `declared no skill fits: ${r.skills.skip}` : '',
       partly.length ? `read only partly: ${partly.join(', ')}` : '',
       unbacked.length ? `report names skills with no whole read on record: ${unbacked.join(', ')}` : '',
+      undocumented.length ? `opened none of the skill's own documents: ${undocumented.map(x => `${x.n} (${x.docs})`).join(', ')}` : '',
       r.role === 'orchestrator' && directCount(r) ? `direct work ${directCount(r)} (${directList(r)})` : '',
     ].filter(Boolean);
-    lines.push(`- ${r.key} (${r.role}, ${r.state}${r.resumed ? ', resumed' : ''}): ${r.turns} turns, max context ${k(r.maxContext)}, $${r.cost.toFixed(2)}; skills read ${read.join(', ') || 'none'}${unread ? `, ${unread} listed never read` : ''}${flags.length ? `; ${flags.join('; ')}` : ''}`);
+    lines.push(`- ${r.key} (${r.role}, ${r.state}${r.resumed ? ', resumed' : ''}): ${r.turns} turns, max context ${k(r.maxContext)}, $${r.cost.toFixed(2)}; skills read ${read.join(', ') || 'none'}${r.skills.docs?.length ? ` and ${new Set(r.skills.docs.filter(d => !d.partial).map(d => `${d.name}/${d.file}`)).size} of their documents` : ''}${unread ? `, ${unread} listed never read` : ''}${flags.length ? `; ${flags.join('; ')}` : ''}`);
   }
   const notes: string[] = [];
   const roles = [...new Set(runs.map(r => r.role))];
