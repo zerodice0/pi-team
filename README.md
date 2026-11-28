@@ -4,7 +4,7 @@
 
 - git worktree 하나와 branch `pi-team/<team>`
 - 사용자가 직접 대화하는 **팀장**(worktree에서 메인 모드처럼 도는 대화형 pi 세션: 실제 orchestrator 모델로 작은 일은 직접 하고 나머지는 팀원에게 맡김)
-- 팀장이 [pi-subagents](https://www.npmjs.com/package/pi-subagents)로 위임하는 역할별 팀원(task, scout, reviewer, vision, image 등)
+- 팀장이 [pi-subagents](https://www.npmjs.com/package/pi-subagents)로 위임하는 역할별 팀원(task, scout, reviewer, vision, art-reviewer, image, modeler, animator 등)
 
 메인 pi 세션의 모델과 도구는 `/team main`을 실행하지 않는 한 바뀌지 않습니다. 설계 전문은 [`docs/DESIGN.md`](docs/DESIGN.md)에 있습니다.
 
@@ -127,7 +127,7 @@ export PI_CACHE_RETENTION=long
 | 속성 | 뜻 |
 |---|---|
 | `description` | 한 줄 설명. 팀장이 역할을 고를 때 보는 목록과 agent 설명에 들어갑니다. |
-| `skills` | 팀원에게 줄 스킬 이름 목록. pi가 찾는 위치(`~/.agents/skills` 등)에 설치되어 있어야 합니다. 저장소가 `.omp/skills`, `.pi/skills`, `.agents/skills`에 둔 스킬은 이 목록과 상관없이 모든 팀원(메인 모드 구성원 포함)과 팀장에게 함께 보이고, 이름이 같은 일반 스킬보다 우선합니다. |
+| `skills` | 팀원에게 줄 스킬 이름 목록. pi가 찾는 위치(`~/.agents/skills` 등)에 설치되어 있거나, pi-team 저장소의 `role-skills/`에 있어야 합니다. `role-skills/`의 스킬은 pi-team이 역할 전용으로 싣는 스킬입니다. 구성원 agent의 `skillPath`로만 전달되므로 메인 세션과 팀장의 스킬 목록에는 나오지 않고, 메인은 그 역할에 위임해서 씁니다(팀장은 `team_skills`로 찾아 다른 구성원에게 더해 줄 수 있습니다). 지금은 `animator`의 `opentoonz-native-animation`이 있습니다. 저장소가 `.omp/skills`, `.pi/skills`, `.agents/skills`에 둔 스킬은 이 목록과 상관없이 모든 팀원(메인 모드 구성원 포함)과 팀장에게 함께 보이고, 이름이 같은 일반 스킬보다 우선합니다. |
 | `mcp` | 팀원 전용 MCP 서버 이름 목록. `blender`와 `rea`가 있습니다. |
 | `tools`, `extensions`, `readOnly`, `max`, `prompt` | 도구 목록, 팀원 전용 확장, 읽기 전용 여부, 동시 실행 상한, 추가 프롬프트 |
 
@@ -146,6 +146,7 @@ export PI_CACHE_RETENTION=long
 - reviewer: 구성원이 코드를 바꾼 뒤, 사용자에게 완료를 보고하기 전에 부릅니다.
 - qa-tester: 웹 UI를 브라우저에서 실행하고 확인할 때 부릅니다.
 - vision: 스크린샷과 디자인 이미지를 판독할 때 부릅니다.
+- art-reviewer: 아트, 합성, 모션 산출물(렌더, 스프라이트, 애니메이션 클립)을 완료로 보고하기 전에 부릅니다. 산출물, 기준 자료, 수용 기준을 넘기고, 모션이면 전 프레임 스트립과 정상 속도 클립도 넘깁니다. 읽기 전용이며 명령을 실행하지 못하므로, 영상은 프레임 이미지로 받아야 합니다.
 
 팀원 전용 MCP 서버는 팀원이 처음 도구를 호출할 때 시작하고, 팀원 세션이 끝날 때 프로세스 그룹째 종료합니다(SIGTERM, 5초 뒤 SIGKILL). 도구를 쓰지 않는 팀원은 서버를 띄우지 않으며, 도구 정의는 `~/.cache/pi-team/mcp/<이름>-tools.json`에 캐시합니다.
 

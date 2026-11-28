@@ -102,7 +102,7 @@ export const memberCacheRetention = () => shellMember || 'short';
 const balance = [
   'Do small work yourself and delegate the rest. Your context is re-read on every turn, so keep it for the user and for decisions:',
   '- Do it yourself when it is small: answering from what you know, reading one or two known files, an edit of a few lines in a file you already know, a git or file command with short output.',
-  '- Delegate by field: when a member\'s description or skills cover the field of the work (for example 3D or Blender, Flutter, Android or Kotlin, iOS or Swift, web UI, browser checks, images, security, reverse engineering), give it to that member. You do not carry those skills; the member does. The exception is an edit of a few lines in a file you already know.',
+  '- Delegate by field: when a member\'s description or skills cover the field of the work (for example 3D or Blender, 2D animation in OpenToonz, Flutter, Android or Kotlin, iOS or Swift, web UI, browser checks, images, security, reverse engineering), give it to that member. You do not carry those skills; the member does. The exception is an edit of a few lines in a file you already know.',
   '- Always delegate builds, tests, device or simulator runs, browser captures and long logs, even a single command: their output stays in your context. Review and verification go to reviewer, qa-tester or vision.',
   '- Hand off midway: when work you started yourself has you reading more than 3-4 files, or fixing the same problem a third time, stop and brief a member with what you found so far (paths, findings, what failed).',
   '- Look at an image yourself only when you must judge it for the user, and not the same image twice.',
@@ -144,6 +144,7 @@ const routes: [role: string, line: string][] = [
   ['reviewer', 'reviewer: after a member changes code and before you report it to the user as done. Give it the goal, the done criteria and the changed files.'],
   ['qa-tester', 'qa-tester: to run and check a web UI in a browser.'],
   ['vision', 'vision: to read screenshots and design images; do not open the same images yourself.'],
+  ['art-reviewer', 'art-reviewer: before you report art, compositing or motion output (renders, sprites, animation clips) as done. Give it the artifacts, the references and the acceptance criteria; for motion, a strip of every frame and a clip at normal speed, since a still cannot show motion. vision only reads UI captures and designs.'],
 ];
 // prefix: the agent name before the role; main mode's agents are pi-team.<role>.
 export function routingGuide(presets: Presets, preset: string, prefix = `pi-team.${preset}-`) {

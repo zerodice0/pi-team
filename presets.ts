@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { blenderTools, toolName } from './blender-mcp/extension.ts';
 import { reaTools } from './rea-mcp/extension.ts';
 import { ambientScope, effectiveModels, readOverrides } from './overrides.ts';
-import type { RepoSkills } from './skills.ts';
+import { roleSkillsDir, type RepoSkills } from './skills.ts';
 import { exists, locked, log, mkdir, namePattern, names, readJson, readText, remove, root, teamDir, writeAtomic, writeJson } from './registry.ts';
 
 export interface Role { models: string[]; description?: string; skills?: string[]; mcp?: string[]; tools?: string[]; extensions?: string[]; readOnly?: boolean; max?: number; prompt?: string }
@@ -214,7 +214,9 @@ export function roleAgent(preset: string, role: string, item: Role, mode: 'team'
     repo?.names.length ? `The repository ships its own skills (${repo.names.join(', ')}). When a task matches one, read it before starting; where it and a general skill both fit, follow the repository's.` : '',
   ].filter(Boolean).join('\n\n');
   const description = `pi-team ${preset} ${role} member${item.description ? `: ${item.description.trim()}` : ''}`;
-  return { description, model: `team/${preset}.${role}`, tools, excludeTools, skills, ...(repo?.dirs.length ? { skillPath: repo.dirs } : {}), extensions: [], subagentOnlyExtensions, systemPrompt };
+  // Repository folders first, so a project skill wins over pi-team's role skill of the same name.
+  const skillPath = [...(repo?.dirs ?? []), ...(exists(roleSkillsDir) ? [roleSkillsDir] : [])];
+  return { description, model: `team/${preset}.${role}`, tools, excludeTools, skills, ...(skillPath.length ? { skillPath } : {}), extensions: [], subagentOnlyExtensions, systemPrompt };
 }
 export function generateAgents(presets: Presets, target = join(getAgentDir(), 'agents', 'pi-team')) {
   mkdir(target);
@@ -226,7 +228,7 @@ export function generateAgents(presets: Presets, target = join(getAgentDir(), 'a
       const def = roleAgent(preset, role, item);
       const body = ['---', 'package: pi-team', `name: ${preset}-${role}`, `description: ${def.description}`, `model: ${def.model}`,
         `tools: ${def.tools.join(', ')}`, ...(def.excludeTools.length ? [`excludeTools: ${def.excludeTools.join(', ')}`] : []),
-        ...(def.skills.length ? [`skills: ${def.skills.join(', ')}`] : []), 'extensions: []',
+        ...(def.skills.length ? [`skills: ${def.skills.join(', ')}`] : []), ...(def.skillPath ? [`skillPath: ${def.skillPath.join(', ')}`] : []), 'extensions: []',
         ...(def.subagentOnlyExtensions.length ? [`subagentOnlyExtensions: ${def.subagentOnlyExtensions.map(s => JSON.stringify(s)).join(', ')}`] : []),
         '---', '', managed, '', def.systemPrompt, ''].join('\n');
       live.add(`${role}.md`);

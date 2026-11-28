@@ -2,8 +2,14 @@ import { getAgentDir, loadSkills, type Skill } from '@earendil-works/pi-coding-a
 import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { exists } from './registry.ts';
 
+// Skills pi-team ships for its roles (role-skills/<name>/SKILL.md). Members find them through the
+// role agent's skillPath, which pi-subagents keeps private to the child, so they never enter the main
+// session's or a lead's skill list: the main session delegates to the role instead of reading them.
+// The folder is not named skills/ so pi never takes it for a package skill folder.
+export const roleSkillsDir = fileURLToPath(new URL('./role-skills', import.meta.url));
 // loadSkills() alone reads only <agentDir>/skills and <cwd>/.pi/skills; pi's package manager also adds
 // ~/.agents/skills, .agents/skills in the working tree, and the skills of installed packages (pi-subagents).
 export function skillCatalog(cwd: string): Skill[] {
@@ -15,7 +21,8 @@ export function skillCatalog(cwd: string): Skill[] {
     } catch { return []; }
   };
   // Repository folders first: on a name clash the first skill loaded wins, and the project's should.
-  const skillPaths = [join(cwd, '.omp', 'skills'), join(cwd, '.agents', 'skills'), join(homedir(), '.agents', 'skills'),
+  // pi-team's role skills are listed too, so team_skills can give one to a member of another role.
+  const skillPaths = [join(cwd, '.omp', 'skills'), join(cwd, '.agents', 'skills'), join(homedir(), '.agents', 'skills'), roleSkillsDir,
     ...packageDirs(join(agentDir, 'npm', 'node_modules')).map(dir => join(dir, 'skills'))].filter(exists);
   return loadSkills({ cwd, agentDir, skillPaths, includeDefaults: true }).skills;
 }
