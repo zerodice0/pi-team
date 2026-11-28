@@ -27,7 +27,8 @@ export interface RunStat {
   skills: { listed: string[]; listedChars: number; extra?: string[]; read: SkillRead[]; skip?: string };
   // Members only: headings the lead's brief left out, and headings missing from the member's final report.
   brief?: { chars: number; missing: string[] };
-  report?: { chars: number; missing: string[] };
+  // skills: listed skills the report's Checks section names, to compare with the reads on record.
+  report?: { chars: number; missing: string[]; skills?: string[] };
 }
 export const briefHeadings = ['Goal', 'Background', 'Read first', 'Do', 'Do not', 'Done when', 'Limits', 'Report'];
 export const reportHeadings = ['Result', 'Checks', 'Open issues', 'Changed files', 'Artifacts'];
@@ -38,7 +39,19 @@ const missingHeadings = (text: string, names: string[]) => names.filter(name => 
   return !new RegExp(`^\\s*(?:Task:\\s*)?(?:#{1,6}\\s*|\\*\\*)${n}\\s*(?:\\*\\*|:|-|—|–|\\(|$)`, 'im').test(text);
 });
 export const briefCheck = (task: string) => ({ chars: task.length, missing: missingHeadings(task, briefHeadings) });
-export const reportCheck = (result: string | undefined) => ({ chars: result?.length ?? 0, missing: missingHeadings(result ?? '', reportHeadings) });
+// The Checks section is where a member names the skills it followed; a report without the heading
+// is searched whole. Names match as whole words, so blender-export is not found in blender-export-pipeline.
+const namedSkills = (report: string, names: string[]) => {
+  const from = /^\s*(?:#{1,6}\s*|\*\*)Checks\b.*$/im.exec(report);
+  const rest = from ? report.slice(from.index + from[0].length) : report;
+  const next = from ? /^\s*(?:#{1,6}\s*|\*\*)(?:Result|Open\s+issues|Changed\s+files|Artifacts)\b/im.exec(rest) : null;
+  const text = next ? rest.slice(0, next.index) : rest;
+  return names.filter(n => new RegExp(`(?<![\\w-])${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(text));
+};
+export const reportCheck = (result: string | undefined, skillNames: string[] = []) => {
+  const skills = namedSkills(result ?? '', skillNames);
+  return { chars: result?.length ?? 0, missing: missingHeadings(result ?? '', reportHeadings), ...(skills.length ? { skills } : {}) };
+};
 const ended = (state: string) => state === 'done' || state === 'failed' || state === 'stopped';
 // Briefs written before the standard form use other headings; judge missing headings only on briefs
 // that follow the form at all. A report is silent when the member left almost no final text.
@@ -94,7 +107,7 @@ export function trackRun(pi: ExtensionAPI, team: Team, row: () => Participant | 
     const p = row();
     if (!stat || !p) return;
     stat.key = p.key; stat.state = p.state; stat.endedAt = Date.now();
-    if (stat.role !== 'orchestrator' && ended(p.state)) stat.report = reportCheck(p.error ? undefined : p.result);
+    if (stat.role !== 'orchestrator' && ended(p.state)) stat.report = reportCheck(p.error ? undefined : p.result, stat.skills.listed);
     try { mkdir(statsDir); writeJson(file()!, stat); } catch { /* statistics never block the team */ }
   };
   pi.on('session_start', (_e, ctx) => {
@@ -258,7 +271,7 @@ function fromSession(team: Team, p: Participant): RunStat | undefined {
       if (!stat.skills.listed.includes(read.name)) stat.skills.extra = [...new Set([...(stat.skills.extra ?? []), read.name])];
     }
   }
-  if (p.role !== 'orchestrator' && ended(p.state)) stat.report = reportCheck(p.error ? undefined : p.result);
+  if (p.role !== 'orchestrator' && ended(p.state)) stat.report = reportCheck(p.error ? undefined : p.result, stat.skills.listed);
   return stat.turns ? stat : undefined;
 }
 export function backfillStats(dry = false) {
@@ -305,12 +318,15 @@ export function retroReport(teamId: string, all = loadStats()) {
     const unread = r.skills.listed.filter(n => !read.includes(n)).length;
     // Skills the run only ever read in part: the rest of the file, and what it points to, went unseen.
     const partly = read.filter(n => r.skills.read.filter(x => x.name === n).every(x => x.partial));
+    // A signal to check, not a verdict: the report may name a skill to say it did not apply.
+    const unbacked = (r.report?.skills ?? []).filter(n => !r.skills.read.some(x => x.name === n && !x.partial));
     const flags = [
       r.brief ? !inForm(r.brief) ? 'brief not in the standard form' : r.brief.missing.length ? `brief missing ${r.brief.missing.join(', ')}` : '' : '',
       r.report ? silentReport(r.report) ? 'no report' : !formalReport(r.report) ? 'report not in the standard form' : '' : '',
       r.skills.extra?.length ? `looked up unlisted ${r.skills.extra.join(', ')}` : '',
       r.skills.skip ? `declared no skill fits: ${r.skills.skip}` : '',
       partly.length ? `read only partly: ${partly.join(', ')}` : '',
+      unbacked.length ? `report names skills with no whole read on record: ${unbacked.join(', ')}` : '',
       r.role === 'orchestrator' && directCount(r) ? `direct work ${directCount(r)} (${directList(r)})` : '',
     ].filter(Boolean);
     lines.push(`- ${r.key} (${r.role}, ${r.state}${r.resumed ? ', resumed' : ''}): ${r.turns} turns, max context ${k(r.maxContext)}, $${r.cost.toFixed(2)}; skills read ${read.join(', ') || 'none'}${unread ? `, ${unread} listed never read` : ''}${flags.length ? `; ${flags.join('; ')}` : ''}`);
