@@ -128,7 +128,7 @@ export PI_CACHE_RETENTION=long
 |---|---|
 | `description` | 한 줄 설명. 팀장이 역할을 고를 때 보는 목록과 agent 설명에 들어갑니다. |
 | `skills` | 팀원에게 줄 스킬 이름 목록. pi가 찾는 위치(`~/.agents/skills` 등)에 설치되어 있거나, pi-team 저장소의 `role-skills/`에 있어야 합니다. `role-skills/`의 스킬은 pi-team이 역할 전용으로 싣는 스킬입니다. 구성원 agent의 `skillPath`로만 전달되므로 메인 세션과 팀장의 스킬 목록에는 나오지 않고, 메인은 그 역할에 위임해서 씁니다(팀장은 `team_skills`로 찾아 다른 구성원에게 더해 줄 수 있습니다). 지금은 `animator`의 `opentoonz-native-animation`이 있습니다. 저장소가 `.omp/skills`, `.pi/skills`, `.agents/skills`에 둔 스킬은 이 목록과 상관없이 모든 팀원(메인 모드 구성원 포함)과 팀장에게 함께 보이고, 이름이 같은 일반 스킬보다 우선합니다. |
-| `core` | 핵심 스킬 이름 목록. 본문 전체를 구성원 프롬프트에 처음부터 넣습니다. 스킬 하나가 곧 그 역할이 일하는 방법일 때만 씁니다(매 턴 실리므로 한두 개까지). 기본 preset에서는 `animator`의 `opentoonz-native-animation`이 핵심 스킬입니다. 찾지 못한 이름은 일반 `skills`처럼 목록에 실립니다. |
+| `core` | 핵심 스킬 이름 목록. 본문 전체를 구성원 프롬프트에 처음부터 넣습니다. 스킬 하나가 곧 그 역할이 일하는 방법일 때만 씁니다(매 턴 실리므로 한두 개까지). 기본 preset에서는 `animator`의 `opentoonz-native-animation`과 `modeler`의 `model-delivery-checks`가 핵심 스킬입니다. `model-delivery-checks`는 3D 게임 에셋을 넘기기 전 점검으로, Blender 안에서 도는 `scripts/audit_asset.py`가 메시 결함·삼각형 예산을 재고 내보낸 GLB를 다시 불러 크기·삼각형 수·필수 확장을 대조합니다. 찾지 못한 이름은 일반 `skills`처럼 목록에 실립니다. |
 | `mcp` | 팀원 전용 MCP 서버 이름 목록. `blender`와 `rea`가 있습니다. |
 | `tools`, `extensions`, `readOnly`, `max`, `prompt` | 도구 목록, 팀원 전용 확장, 읽기 전용 여부, 동시 실행 상한, 추가 프롬프트 |
 

@@ -53,13 +53,14 @@
           ],
           "readOnly": true,
           "description": "Read-only strict acceptance review of art, compositing and motion: character edges, alpha halos and holes, grounding, occlusion, frame transitions and timing, with severity and frame evidence",
-          "prompt": "Judge only from the assets, captures, videos and criteria you were given. A single still never verifies motion.\nFor each defect give its severity, the artifact path, the frame or time, the screen region, and what was expected against what you observed.\nKeep observation apart from inference. When the evidence is not enough, do not give PASS; name the criteria and the range you could not check.\nGive a yes or no verdict and the direction of a fix, nothing more. Do not offer pixel offsets or sizes read by eye as fix values; use px values only when they are measured (alpha bounds, pivots, render coordinates).\nAsk for missing evidence limited to the fewest frames and regions needed. Do not modify files.\nIf you cannot confirm the model and effort you actually run on, say they are unconfirmed."
+          "prompt": "Judge only from the assets, captures, videos and criteria you were given. A single still never verifies motion.\nFor each defect give its severity, the artifact path, the frame or time, the screen region, and what was expected against what you observed.\nKeep observation apart from inference. When the evidence is not enough, do not give PASS; name the criteria and the range you could not check.\nGive a yes or no verdict and the direction of a fix, nothing more. Do not offer pixel offsets or sizes read by eye as fix values; use px values only when they are measured (alpha bounds, pivots, render coordinates).\nAsk for missing evidence limited to the fewest frames and regions needed. Do not modify files.\nIf you cannot confirm the model and effort you actually run on, say they are unconfirmed.\nFor a game asset, judge it as the game shows it: at its real display size on the game background, not only enlarged on a blank one. Sprites need a sheet of every frame and measured values (canvas size, baseline per frame, alpha bounds, and the difference across the loop boundary against the mean difference between frames); tiling textures need a 2 by 2 repeat. Name each of these the evidence lacks as not checked."
         },
         "image": {
           "description": "Generates or edits images with the Codex image tool and saves them under artifacts/",
           "models": [
             "@image"
-          ]
+          ],
+          "prompt": "Before you generate, write down the pass or fail criteria you will judge the result by, taken from the brief and the references.\nStart with the smallest batch that can show whether the direction is right. Change one thing per round, so you know what caused the difference.\nStop regenerating after three rounds that still fail, or when the same criterion fails twice after different fixes; report the defect that remains and what you tried.\nFor every image you keep, report the prompt, the reference images, the tool and the date, so its source can be recorded."
         },
         "modeler": {
           "models": [
@@ -82,6 +83,9 @@
           "prompt": "More Blender skills are installed next to the listed ones (geometry nodes, shader and compositing nodes, rigging, physics, cameras, multiview and atlas fitting, reference validation). When the task needs one, list that skills folder and read the matching SKILL.md.",
           "mcp": [
             "blender"
+          ],
+          "core": [
+            "model-delivery-checks"
           ]
         },
         "animator": {
@@ -178,7 +182,8 @@
           "skills": [
             "game-feel",
             "game-ui-ux"
-          ]
+          ],
+          "prompt": "Before you write code, find which engine and which pinned version the project uses (its manifest or lock file) and use the APIs of that version; an existing project keeps its version unless the brief asks for a migration.\nOptimise only after measuring: turn the target into a frame time budget, find the largest bottleneck on a release-like build, fix that one, and measure again on the same scene and device. Report the numbers before and after.\nWhen you change saved data, test a save and load round trip, a truncated or corrupted file, and a save written by the previous version."
         },
         "cloud-dev": {
           "models": [
