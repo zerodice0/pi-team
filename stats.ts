@@ -8,7 +8,12 @@ import { mkdir, readJson, root, writeJson, type Participant, type Snapshot, type
 // the run cost. Records outlive their teams (teams are archived), so role and skill choices can be
 // judged on what happened rather than guessed again for every team.
 export const statsDir = join(root, 'stats');
-export interface SkillRead { name: string; turn: number; chars: number }
+// partial: a read tool call with a limit, or an offset past the first line.
+export interface SkillRead { name: string; turn: number; chars: number; partial?: boolean }
+const partialRead = (tool: string, args: unknown) => {
+  const a = args as { offset?: unknown; limit?: unknown } | undefined;
+  return tool === 'read' && ((a?.limit !== undefined && a.limit !== null) || Number(a?.offset ?? 1) > 1);
+};
 export interface RunStat {
   v: 1; team: string; preset: string; repo: string; role: string; key: string; sessionId: string;
   task?: string; startedAt: number; endedAt: number; state: string; resumed: boolean; models: string[];
@@ -68,7 +73,7 @@ const textOf = (result: unknown) => {
 export function trackRun(pi: ExtensionAPI, team: Team, row: () => Participant | undefined) {
   let stat: RunStat | undefined;
   let listed: { name: string; dir: string }[] = [];
-  const pending = new Map<string, { name: string; turn: number }>();
+  const pending = new Map<string, { name: string; turn: number; partial?: boolean }>();
   const file = () => stat && join(statsDir, `${stat.team}-${stat.key}-${stat.sessionId.slice(0, 13)}.json`);
   const save = () => {
     const p = row();
@@ -119,7 +124,7 @@ export function trackRun(pi: ExtensionAPI, team: Team, row: () => Participant | 
     const text = e.toolName === 'read' ? String(e.args?.path ?? '') : String(e.args?.command ?? '');
     const byDir = listed.find(s => text.includes(`${s.dir}/SKILL.md`));
     const name = byDir?.name ?? skillPath.exec(text)?.[1];
-    if (name) pending.set(e.toolCallId, { name, turn: stat.turns + 1 });
+    if (name) pending.set(e.toolCallId, { name, turn: stat.turns + 1, ...(partialRead(e.toolName, e.args) ? { partial: true } : {}) });
   });
   pi.on('tool_execution_end', e => {
     const read = pending.get(e.toolCallId);
@@ -197,7 +202,7 @@ function fromSession(team: Team, p: Participant): RunStat | undefined {
     startedAt: p.startedAt ?? p.at, endedAt: p.at, state: p.state, resumed: false, models: [], turns: 0,
     tokens: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 }, cost: 0, maxContext: 0, skills: { listed: [], listedChars: 0, read: [] } };
   let listed: { name: string; dir: string }[] = [];
-  const calls = new Map<string, { name: string; turn: number }>();
+  const calls = new Map<string, { name: string; turn: number; partial?: boolean }>();
   for (const line of readFileSync(p.sessionFile, 'utf8').split('\n')) {
     if (!line) continue;
     let e: any;
@@ -227,7 +232,7 @@ function fromSession(team: Team, p: Participant): RunStat | undefined {
         if (c.type !== 'toolCall' || (c.name !== 'read' && c.name !== 'bash')) continue;
         const text = c.name === 'read' ? String(c.arguments?.path ?? '') : String(c.arguments?.command ?? '');
         const name = listed.find(s => text.includes(`${s.dir}/SKILL.md`))?.name ?? skillPath.exec(text)?.[1];
-        if (name) calls.set(c.id, { name, turn: stat.turns });
+        if (name) calls.set(c.id, { name, turn: stat.turns, ...(partialRead(c.name, c.arguments) ? { partial: true } : {}) });
       }
     } else if (m.role === 'toolResult' && calls.has(m.toolCallId) && !m.isError) {
       const read = calls.get(m.toolCallId)!;
@@ -280,11 +285,14 @@ export function retroReport(teamId: string, all = loadStats()) {
   for (const r of [...runs].sort((a, b) => a.startedAt - b.startedAt)) {
     const read = [...new Set(r.skills.read.map(x => x.name))];
     const unread = r.skills.listed.filter(n => !read.includes(n)).length;
+    // Skills the run only ever read in part: the rest of the file, and what it points to, went unseen.
+    const partly = read.filter(n => r.skills.read.filter(x => x.name === n).every(x => x.partial));
     const flags = [
       r.brief ? !inForm(r.brief) ? 'brief not in the standard form' : r.brief.missing.length ? `brief missing ${r.brief.missing.join(', ')}` : '' : '',
       r.report ? silentReport(r.report) ? 'no report' : !formalReport(r.report) ? 'report not in the standard form' : '' : '',
       r.skills.extra?.length ? `looked up unlisted ${r.skills.extra.join(', ')}` : '',
       r.skills.skip ? `declared no skill fits: ${r.skills.skip}` : '',
+      partly.length ? `read only partly: ${partly.join(', ')}` : '',
       r.role === 'orchestrator' && directCount(r) ? `direct work ${directCount(r)} (${directList(r)})` : '',
     ].filter(Boolean);
     lines.push(`- ${r.key} (${r.role}, ${r.state}${r.resumed ? ', resumed' : ''}): ${r.turns} turns, max context ${k(r.maxContext)}, $${r.cost.toFixed(2)}; skills read ${read.join(', ') || 'none'}${unread ? `, ${unread} listed never read` : ''}${flags.length ? `; ${flags.join('; ')}` : ''}`);

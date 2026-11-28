@@ -129,7 +129,7 @@ export const briefForm = [
   '## Do - numbered, highest priority first.',
   '## Do not - write scope (which files or folders it may change), files to leave alone, invariants. Read-only roles: say so.',
   '## Done when - acceptance criteria and how to check them (commands, captures, numbers).',
-  '## Limits - a time box (default 30 minutes), a notes file to append after each step, and when to stop and report. Keep notes, captures, evidence and other artifacts under artifacts/ in the team worktree; never in /tmp, the main checkout or another shared folder, which can be cleaned while the team runs. If the user or a document names another place, keep the originals under artifacts/ and copy them there when done.',
+  '## Limits - a time box (default 30 minutes), a notes file to append after each step, and when to stop and report. The time box limits how much a member does, not how: it cuts scope rather than skip the steps or reading its skills require, so give modeling, animation and other skill-heavy work enough time or a narrower task. Keep notes, captures, evidence and other artifacts under artifacts/ in the team worktree; never in /tmp, the main checkout or another shared folder, which can be cleaned while the team runs. If the user or a document names another place, keep the originals under artifacts/ and copy them there when done.',
   '## Report - what to return: the result, checks run and checks not run, open issues, changed files, artifact paths.',
   'Add what the role needs: questions and evidence as path:line for investigation; findings P0-P2 with proof and a verdict for review; output paths for artifacts and captures.',
 ].join('\n');
