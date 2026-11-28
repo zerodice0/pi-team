@@ -275,13 +275,11 @@ export function candidates(models: string[], registry: ExtensionContext["modelRe
 }
 interface RouteState { override?: string }
 const overrideKey = (o?: { model?: string; level?: string; models?: string[] }) => o?.model || o?.level || o?.models?.length ? `${o.model ?? ''}|${o.level ?? ''}|${o.models?.join(',') ?? ''}` : '';
-// leadLevel: in a lead, the thinking level pi selected at start. When the user picks another one
-// (shift+tab, /thinking), the orchestrator follows it instead of the candidate's level.
-export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (model: string, fallback: boolean, level: ThinkingLevel) => void, options: { skipOrchestrator?: boolean; leadLevel?: () => ThinkingLevel | undefined } = {}) {
+export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (model: string, fallback: boolean, level: ThinkingLevel) => void, options: { skipOrchestrator?: boolean } = {}) {
   for (const [preset, roles] of Object.entries(presets)) for (const [role, item] of Object.entries(roles)) {
     if (role === 'image' && imageDisabled()) continue;
-    // The main session never runs a lead; listing team/<preset>.orchestrator there only invites
-    // picking it as the main model, which ignores the thinking level and loses cache warming.
+    // Main sessions and leads run on physical models; listing team/<preset>.orchestrator there only
+    // invites picking it as the session model, which ignores the thinking level and loses cache warming.
     if (options.skipOrchestrator && role === 'orchestrator') continue;
     const id = `${preset}.${role}`;
     pi.registerVirtualModel<RouteState>({ provider: 'team', id, name: `Team ${id}`, thinkingLevels: [...levels], route(request, ctx) {
@@ -307,8 +305,7 @@ export function registerModels(pi: ExtensionAPI, presets: Presets, onRoute?: (mo
         const warning = `team/${id}: all authenticated candidates are cooling down; trying ${choice.key}.`;
         if (ctx.hasUI) ctx.ui.notify(warning, 'warning'); else process.stderr.write(`${warning}\n`);
       }
-      const base = role === 'orchestrator' ? options.leadLevel?.() : undefined;
-      const level = base && request.thinkingLevel && request.thinkingLevel !== base ? request.thinkingLevel : override?.level ?? choice.level;
+      const level = override?.level ?? choice.level;
       if (request.reason !== 'direct') onRoute?.(choice.key, choice.index !== 0, level);
       return { model: choice.model, thinkingLevel: level, ...(changed ? { state: { override: routed } } : {}) };
     } });

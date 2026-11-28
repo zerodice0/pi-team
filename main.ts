@@ -20,6 +20,44 @@ const overflow = /context(?:[ _-]window| length)|too long|maximum context|prompt
 // keeps subagent (and the tools pi-subagents declares with it) active.
 const delegationTools = ['subagent', 'subagent_supervisor', 'bg_wait'];
 
+// After the session model's request finally failed, offer the next candidate from models() and wait
+// for the user. Shared by main mode and team leads, which both run on a fixed physical model: an
+// automatic switch would resend the whole conversation at full input price without asking.
+export function fallbackOffer(pi: ExtensionAPI, models: (ctx: ExtensionContext) => string[] | undefined, who: string) {
+  const asked = new Set<number>();
+  return async (ctx: ExtensionContext) => {
+    const branch = ctx.sessionManager.getBranch();
+    type Reply = { role: string; stopReason?: string; errorMessage?: string; provider?: string; model?: string; timestamp?: number };
+    let last: Reply | undefined;
+    for (let i = branch.length - 1; i >= 0 && !last; i--) {
+      const entry = branch[i] as { type: string; message?: Reply };
+      if (entry.type === 'message' && entry.message?.role === 'assistant') last = entry.message;
+    }
+    if (!last || last.stopReason !== 'error' || last.timestamp === undefined || asked.has(last.timestamp)) return;
+    const chain = models(ctx);
+    if (!chain) return;
+    asked.add(last.timestamp);
+    const failed = `${last.provider}/${last.model}`;
+    const error = last.errorMessage ?? '';
+    const cooled = recordCooldown(failed, error);
+    if (!cooled && overflow.test(error)) return; // another model would not help
+    const now = Date.now();
+    const next = candidates(chain, ctx.modelRegistry).filter(c => c.key !== failed)
+      .sort((a, b) => Number(a.until > now) - Number(b.until > now) || a.index - b.index)[0];
+    if (!next) {
+      ctx.ui.notify(`pi-team: ${who} ${failed} failed${cooled ? ` (${cooled.reason})` : ''}; no other signed-in orchestrator candidate.`, 'warning');
+      return;
+    }
+    const yes = `Switch to ${next.key}:${next.level}`;
+    const choice = await ctx.ui.select(
+      `${who[0].toUpperCase()}${who.slice(1)} ${failed} failed${cooled ? ` (${cooled.reason})` : ''}: ${error.slice(0, 160)}\nSwitching loses the prompt cache: the next request sends the whole conversation again at full input price.`,
+      [yes, `Stay on ${failed}`]);
+    if (choice !== yes) return;
+    if (!await pi.setModel(next.model)) { ctx.ui.notify(`pi-team: cannot switch to ${next.key}.`, 'error'); return; }
+    pi.setThinkingLevel(next.level);
+    ctx.ui.notify(`pi-team: ${who} is now ${next.key}:${next.level}. Send your message again, or "continue".`, 'info');
+  };
+}
 // Sessions that never left main mode leave their override files behind; drop ones idle for two weeks.
 function pruneOverrides() {
   const dir = join(root, 'main-overrides');
@@ -36,7 +74,6 @@ export function mainMode(pi: ExtensionAPI, load: () => Presets, cwd: string) {
   // Children inherit this, so their routers read this session's overrides (/team effort, /team model).
   let key = '';
   const active = new Map<string, Registration>();
-  const asked = new Set<number>();
   const unregister = () => { for (const r of active.values()) r.dispose(); active.clear(); roles = []; };
   const register = (presets: Presets, name: string) => {
     unregister();
@@ -88,38 +125,7 @@ export function mainMode(pi: ExtensionAPI, load: () => Presets, cwd: string) {
     preset = undefined;
   }
   // Offer the next orchestrator candidate after the main model's request finally failed.
-  async function offerFallback(ctx: ExtensionContext) {
-    const branch = ctx.sessionManager.getBranch();
-    type Reply = { role: string; stopReason?: string; errorMessage?: string; provider?: string; model?: string; timestamp?: number };
-    let last: Reply | undefined;
-    for (let i = branch.length - 1; i >= 0 && !last; i--) {
-      const entry = branch[i] as { type: string; message?: Reply };
-      if (entry.type === 'message' && entry.message?.role === 'assistant') last = entry.message;
-    }
-    if (!last || last.stopReason !== 'error' || !preset || last.timestamp === undefined || asked.has(last.timestamp)) return;
-    asked.add(last.timestamp);
-    const failed = `${last.provider}/${last.model}`;
-    const error = last.errorMessage ?? '';
-    const cooled = recordCooldown(failed, error);
-    if (!cooled && overflow.test(error)) return; // another model would not help
-    const presets = load();
-    if (!presets[preset]) return;
-    const now = Date.now();
-    const next = candidates(presets[preset].orchestrator.models, ctx.modelRegistry).filter(c => c.key !== failed)
-      .sort((a, b) => Number(a.until > now) - Number(b.until > now) || a.index - b.index)[0];
-    if (!next) {
-      ctx.ui.notify(`pi-team: main model ${failed} failed${cooled ? ` (${cooled.reason})` : ''}; ${preset} has no other signed-in orchestrator candidate.`, 'warning');
-      return;
-    }
-    const yes = `Switch to ${next.key}:${next.level}`;
-    const choice = await ctx.ui.select(
-      `Main model ${failed} failed${cooled ? ` (${cooled.reason})` : ''}: ${error.slice(0, 160)}\nSwitching loses the prompt cache: the next request sends the whole conversation again at full input price.`,
-      [yes, `Stay on ${failed}`]);
-    if (choice !== yes) return;
-    if (!await pi.setModel(next.model)) { ctx.ui.notify(`pi-team: cannot switch to ${next.key}.`, 'error'); return; }
-    pi.setThinkingLevel(next.level);
-    ctx.ui.notify(`pi-team: main model is now ${next.key}:${next.level}. Send your message again, or "continue".`, 'info');
-  }
+  const offerFallback = fallbackOffer(pi, () => preset ? load()[preset]?.orchestrator.models : undefined, 'main model');
   // Team member agents need their team's child extension and worktree; from here they only fail.
   const teamOnly = (agent: string, presets: Presets) => Object.entries(presets).some(([p, rs]) => Object.keys(rs).some(r => agent === `pi-team.${p}-${r}`));
 

@@ -300,9 +300,10 @@ export function retroReport(teamId: string, all = loadStats()) {
     const never = listed.filter(n => !mine.some(r => r.skills.read.some(x => x.name === n)));
     if (never.length >= 5) notes.push(`${role} carried ${never.length} skills it never read (${never.slice(0, 5).join(', ')}, …): see /team stats ${role} before trimming the role.`);
   }
-  // A lead's own reads, searches and commands each re-read its whole context; members should do them.
+  // A lead's own reads, searches and commands each re-read its whole context. Small work is its own;
+  // this many calls means jobs grew inside the lead instead of moving to a member.
   for (const r of runs.filter(r => r.role === 'orchestrator' && directCount(r) >= 20)) {
-    notes.push(`The lead (${r.key}) ran ${directCount(r)} direct work calls (${directList(r)}) over ${r.turns} turns with up to ${k(r.maxContext)} context: brief a member for reading, builds and checks, or resume one, instead of doing them yourself.`);
+    notes.push(`The lead (${r.key}) ran ${directCount(r)} direct work calls (${directList(r)}) over ${r.turns} turns with up to ${k(r.maxContext)} context: past small work, hand the job to the member whose field fits (or resume one) with what you found so far; builds, tests and long logs always go to a member.`);
   }
   const silent = runs.filter(r => silentReport(r.report));
   if (silent.length) notes.push(`Ended without a report: ${silent.map(r => `${r.key} (${r.state}${inForm(r.brief) && r.brief!.missing.includes('Limits') ? ', brief had no Limits' : ''})`).join(', ')}.`);

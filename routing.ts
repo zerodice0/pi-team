@@ -5,9 +5,9 @@ import { candidates, presetCatalog, readPresets, type Role } from './presets.ts'
 import { getLead, getTeam, isLive, log, members, teamTitle } from './registry.ts';
 
 // Where /team effort, /team model and /team routes act:
-//  - lead: its own team; the orchestrator's effort is pi's own thinking level (shift+tab works too),
-//    also saved as the override so the router keeps it even when it equals the starting level
-//  - main session with --team <id>: that team, through its overrides file
+//  - lead: its own team; the orchestrator is the lead's own session model and thinking level
+//  - main session with --team <id>: that team's member roles, through its overrides file. The lead's
+//    model belongs to its session, so it is changed in the lead pane.
 //  - main session in main mode: the main preset; the orchestrator is the main model itself
 export interface RouteTarget {
   scope: Scope; roles: Record<string, Role>; cwd: string; label: string;
@@ -30,31 +30,30 @@ const record = (t: RouteTarget, note: string, actor: RouteActor = { by: 'user' }
   return note;
 };
 
+const leadElsewhere = (t: RouteTarget) => new Error(`The lead of ${t.label} runs on its own session model; change its model or effort in the lead pane (/model, shift+tab, or /team model|effort orchestrator there).`);
 // Change one role's effort (null resets it). The orchestrator of this very session is pi's own thinking level.
 export function applyEffort(pi: ExtensionAPI, t: RouteTarget, role: string, level: ThinkingLevel | null, leadLevel?: () => ThinkingLevel | undefined, actor?: RouteActor) {
   const item = t.roles[role];
   if (role === 'orchestrator' && t.self) {
     const next = level ?? (t.self === 'lead' ? leadLevel?.() : undefined) ?? firstLevel(item);
     pi.setThinkingLevel(next);
-    // The lead's router only follows pi's level when it differs from the level the lead started at;
-    // otherwise the override, then the candidate's own level, decide. Without saving the level here,
-    // going back to the starting level under a model override such as opus:medium kept medium.
-    if (t.self === 'lead') setOverride(t.scope, role, { level: level ?? undefined });
     return record(t, `orchestrator: thinking ${next} for this session`, actor);
   }
+  if (role === 'orchestrator' && 'team' in t.scope) throw leadElsewhere(t);
   setOverride(t.scope, role, { level: level ?? undefined });
   return record(t, `${role}: effort ${level ?? 'reset to the preset'}`, actor);
 }
 // Put one model in front of a role's candidates (null resets). In main mode the orchestrator is the main model.
 export async function applyModel(pi: ExtensionAPI, ctx: ExtensionContext, t: RouteTarget, role: string, candidate: string | null, actor?: RouteActor) {
   const item = t.roles[role];
-  if (role === 'orchestrator' && t.self === 'main') {
+  if (role === 'orchestrator' && t.self) {
     const pick = candidates([candidate ?? item.models[0]], ctx.modelRegistry)[0];
     if (!pick) throw new Error(`${candidate ?? item.models[0]} is not available or not signed in here.`);
     if (!await pi.setModel(pick.model)) throw new Error(`Cannot switch to ${pick.key}.`);
     pi.setThinkingLevel(pick.level);
-    return `orchestrator: main model ${pick.key}:${pick.level}`;
+    return record(t, `orchestrator: ${t.self} model ${pick.key}:${pick.level}`, actor);
   }
+  if (role === 'orchestrator' && 'team' in t.scope) throw leadElsewhere(t);
   setOverride(t.scope, role, { model: candidate ?? undefined });
   const warn = candidate && !candidates([candidate], ctx.modelRegistry).length ? ` (warning: ${candidate} is not signed in here; the router will skip it)` : '';
   return record(t, `${role}: model ${candidate ?? 'reset to the preset'}${warn}`, actor);
@@ -76,12 +75,14 @@ export function applyPreset(ctx: ExtensionContext, t: RouteTarget, preset: strin
   const notes: string[] = [];
   const kept: string[] = [];
   for (const role of Object.keys(t.roles)) {
+    // The lead keeps its session model; it changes that with /model or team_route model orchestrator.
+    if (role === 'orchestrator') continue;
     if (!source[role]) { kept.push(role); continue; }
     setOverride(t.scope, role, { ...clear, models: source[role].models, preset });
     if (!candidates(source[role].models, ctx.modelRegistry).length) notes.push(`${role}: no ${preset} candidate is signed in here; the role cannot run until one is`);
   }
   const extra = Object.keys(source).filter(r => !Object.hasOwn(t.roles, r));
-  return [record(t, `all roles: ${preset} models${kept.length ? ` (kept the team preset for ${kept.join(', ')})` : ''}`, actor), ...notes,
+  return [record(t, `member roles: ${preset} models${kept.length ? ` (kept the team preset for ${kept.join(', ')})` : ''}; the lead keeps its session model`, actor), ...notes,
     ...(extra.length ? [`${preset} roles this team does not have (not added): ${extra.join(', ')}`] : [])];
 }
 export const levelOf = (candidate: string) => candidate.split(':').pop() as ThinkingLevel;
@@ -92,7 +93,7 @@ export interface RouteRow {
   steps: { key: string; level: string; usable: boolean; cooling: boolean; chosen: boolean }[];
   running: string[];
 }
-export function routeRows(t: RouteTarget, registry: ExtensionContext['modelRegistry'], thinking?: ThinkingLevel, leadLevel?: () => ThinkingLevel | undefined): RouteRow[] {
+export function routeRows(t: RouteTarget, registry: ExtensionContext['modelRegistry'], thinking?: ThinkingLevel, _leadLevel?: () => ThinkingLevel | undefined): RouteRow[] {
   const overrides = readOverrides(t.scope);
   const now = Date.now();
   const team = 'team' in t.scope ? t.scope.team : undefined;
@@ -106,10 +107,8 @@ export function routeRows(t: RouteTarget, registry: ExtensionContext['modelRegis
       const state = ready.find(r => r.index === i);
       return { key: c.replace(/:[a-z]+$/, ''), level: o?.level ?? levelOf(c), usable: !!state, cooling: !!state && state.until > now, chosen: !!state && state === pick };
     });
-    // Mirror the router: the main model runs at pi's level; a lead follows pi's level only when it
-    // differs from the level the lead started at (see registerModels).
-    const base = t.self === 'lead' ? leadLevel?.() : undefined;
-    const selfLevel = role !== 'orchestrator' || !t.self ? undefined : t.self === 'main' || (base && thinking && thinking !== base) ? thinking : undefined;
+    // The orchestrator is a session model: this session's own level, or the level the lead last ran at.
+    const selfLevel = role !== 'orchestrator' ? undefined : t.self ? thinking : t.current?.level;
     const level = (selfLevel ?? o?.level ?? (pick ? levelOf(chain[pick.index]) : levelOf(chain[0]))) as ThinkingLevel;
     const running = role === 'orchestrator' ? (t.current?.model ? [`${t.current.model}${t.current.level ? `:${t.current.level}` : ''}`] : [])
       : live.filter(m => m.role === role).map(m => `${m.model ?? '?'}${m.level ? `:${m.level}` : ''}`);

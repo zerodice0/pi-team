@@ -94,8 +94,8 @@ export async function routesView(pi: ExtensionAPI, ctx: ExtensionContext, target
             if (next !== r.level) act(() => applyEffort(pi, t, r.role, next, leadLevel));
           }
           else if (r && key === 'm') { done({ pick: { role: r.role, target: ti, selected } }); return; }
-          else if (r && key === 'r') act(() => { applyEffort(pi, t, r.role, null, leadLevel); return r.role === 'orchestrator' && t.self === 'main' ? `${r.role}: effort reset (use m to change the main model)` : (setOverride(t.scope, r.role, null), `${r.role}: reset to the preset`); });
-          else if (key === 'R') act(() => { for (const x of rows) { if (x.role === 'orchestrator' && t.self) applyEffort(pi, t, x.role, null, leadLevel); if (x.role !== 'orchestrator' || t.self !== 'main') setOverride(t.scope, x.role, null); } return 'all roles reset to the preset'; });
+          else if (r && key === 'r') act(() => { applyEffort(pi, t, r.role, null, leadLevel); return r.role === 'orchestrator' && t.self ? `${r.role}: effort reset (use m to change the ${t.self} model)` : (setOverride(t.scope, r.role, null), `${r.role}: reset to the preset`); });
+          else if (key === 'R') act(() => { for (const x of rows) { if (x.role === 'orchestrator' && t.self) applyEffort(pi, t, x.role, null, leadLevel); if (x.role !== 'orchestrator') setOverride(t.scope, x.role, null); } return 'all roles reset to the preset'; });
           tui.requestRender();
         },
         invalidate() {},

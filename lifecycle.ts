@@ -83,8 +83,9 @@ export function dirtyState(repo: string) {
   return { porcelain: [tracked, ...left.map(path => `?? ${path}`)].filter(Boolean).join('\n'), skipped };
 }
 // Anthropic keeps a prompt cache for five minutes by default. A lead that waits longer for its members
-// rewrites its whole context on every wake, and pi's idle cache warming does not run for the team's
-// virtual models, so ask for the one-hour cache unless the user chose a retention already.
+// rewrites its whole context on every wake, so ask for the one-hour cache unless the user chose a
+// retention already. pi's idle cache warming also runs for the lead now that it is on a physical model;
+// it schedules from the cache lifetime, so with the one-hour cache it warms near the hour mark.
 // Read once at load, from the shell: main.json's cacheRetention (applied later, for the main session
 // itself) must not leak into the leads and members that session starts.
 const shellLead = process.env.PI_CACHE_RETENTION;
@@ -95,9 +96,15 @@ export const cacheRetention = () => shellLead || 'long';
 // rewrites it saved (about 2.2M): members rarely pause past five minutes. Teams whose members wait
 // long (device runs, long builds) can set long.
 export const memberCacheRetention = () => shellMember || 'short';
-const leanLead = [
-  'Keep your own context small; it is re-read on every turn. Members do the reading, building and checking:',
-  '- Do not read source files, logs or long documents to review or verify work, and do not run builds, tests or captures yourself. Ask a member (scout, reviewer, qa-tester, vision) and work from its summary.',
+// The lead works like main mode: small work itself, the rest to members. Each rule is one the lead
+// can check while working; a plain "delegate big work" let small jobs grow inside the lead (on
+// 2026-11-26 a lead with a 250k context ran bash 247 times, 78% of its cost).
+const balance = [
+  'Do small work yourself and delegate the rest. Your context is re-read on every turn, so keep it for the user and for decisions:',
+  '- Do it yourself when it is small: answering from what you know, reading one or two known files, an edit of a few lines in a file you already know, a git or file command with short output.',
+  '- Delegate by field: when a member\'s description or skills cover the field of the work (for example 3D or Blender, Flutter, Android or Kotlin, iOS or Swift, web UI, browser checks, images, security, reverse engineering), give it to that member. You do not carry those skills; the member does. The exception is an edit of a few lines in a file you already know.',
+  '- Always delegate builds, tests, device or simulator runs, browser captures and long logs, even a single command: their output stays in your context. Review and verification go to reviewer, qa-tester or vision.',
+  '- Hand off midway: when work you started yourself has you reading more than 3-4 files, or fixing the same problem a third time, stop and brief a member with what you found so far (paths, findings, what failed).',
   '- Look at an image yourself only when you must judge it for the user, and not the same image twice.',
   '- For a follow-up on the same files, resume the member that did the previous round instead of starting a fresh one that has to reread everything: find its exact run id with subagent action "status" or "children.list" (a "Mission" id is not a run id), then call action "resume" with that id and a message. Start a fresh member only for a different role, when resume is rejected, or when the previous one has a very large context.',
   '- Call team_peers only when you need addresses or states.',
@@ -112,7 +119,7 @@ export const intake = [
   'Before the first delegation, check the goal:',
   '- Write a short working brief for yourself: outcome, in scope and out of scope, done criteria, constraints, unknowns. Skip this when the goal already states them.',
   '- Split the unknowns. If an answer would change what gets built or risks rework, ask the user before delegating: at most 3 questions, each with lettered options and your recommended default. Otherwise assume the default, state the assumption to the user, and proceed.',
-  '- When facts in the repository would settle a question, have a scout find them instead of asking the user or reading files yourself.',
+  '- When facts in the repository would settle a question, read them yourself when one or two known files settle it; otherwise have a scout find them instead of asking the user.',
 ].join('\n');
 export const briefForm = [
   'Every member task uses these headings, in this order, kept short and concrete:',
@@ -132,7 +139,7 @@ export const briefForm = [
 // When to reach for the common roles, for the ones this preset has. Descriptions say what a role
 // is; this says when the lead should use it, which the 11-26 preset rework had dropped.
 const routes: [role: string, line: string][] = [
-  ['scout', 'scout: first, whenever facts in the code, docs or logs decide a question (where something is defined or called, what a config does, which files a change touches). Ask a concrete question and work from its path:line findings instead of reading files yourself. It cannot run commands, so builds, tests and git history go to task or qa-tester.'],
+  ['scout', 'scout: first, whenever facts spread over the code, docs or logs decide a question (where something is defined or called, what a config does, which files a change touches). Ask a concrete question and work from its path:line findings instead of reading through many files yourself. It cannot run commands, so builds, tests and git history go to task or qa-tester.'],
   ['task', 'task: implementation, debugging and fixes, unless a specialist role\'s description fits the work better.'],
   ['reviewer', 'reviewer: after a member changes code and before you report it to the user as done. Give it the goal, the done criteria and the changed files.'],
   ['qa-tester', 'qa-tester: to run and check a web UI in a browser.'],
@@ -158,7 +165,7 @@ export function leadPrompt(team: Team, presets: Presets) {
     closeGuide(team.id),
     intake,
     briefForm,
-    leanLead,
+    balance,
     presets[team.preset]?.orchestrator?.prompt ?? '',
   ].join('\n\n');
 }
@@ -173,13 +180,15 @@ export function refreshLeadPrompt(team: Team, presets: Presets) {
   return true;
 }
 
-// The one way to run a lead: team env, the orchestrator model, the lead prompt, role skills and extensions.
+// The one way to run a lead: team env, the lead prompt, role skills and extensions. No --model: the
+// lead picks a physical orchestrator candidate itself at start (see index.ts), where it can see which
+// accounts are signed in and cooling down, and a resumed session keeps the model it last ran on.
 // Without PI_TEAM_ROLE=lead and PI_TEAM_ID, pi-team starts as an ordinary main session.
 function leadCommand(team: Team, presets: Presets, tail: string[]) {
   const orchestrator = presets[team.preset].orchestrator;
   const extra = orchestrator.extensions?.flatMap(path => ['--extension', path]) ?? [];
   const skillArgs = leadSkillArgs(orchestrator.skills, team.worktree);
-  return ['env', `PI_TEAM_ID=${team.id}`, 'PI_TEAM_ROLE=lead', `PI_CACHE_RETENTION=${cacheRetention()}`, `PI_SUBAGENT_CACHE_RETENTION=${memberCacheRetention()}`, 'pi', '--model', `team/${team.preset}.orchestrator`,
+  return ['env', `PI_TEAM_ID=${team.id}`, 'PI_TEAM_ROLE=lead', `PI_CACHE_RETENTION=${cacheRetention()}`, `PI_SUBAGENT_CACHE_RETENTION=${memberCacheRetention()}`, 'pi',
     '--append-system-prompt', leadPromptPath(team.id), ...skillArgs, ...extra, ...tail].map(quote).join(' ');
 }
 // rename within a disk, copy and remove across disks (worktrees and ~/.pi can sit on different volumes).

@@ -16,7 +16,8 @@ import { teamPanel } from './panel.ts';
 import { herdrStatus } from './herdr-status.ts';
 import { participant, type ParticipantRuntime } from './participant.ts';
 import { authGaps, candidates, childEntry, generateAgents, imageDisabled, presetCatalog, presetView, readPresets, registerModels, roleAgent, type Presets } from './presets.ts';
-import { mainMode } from './main.ts';
+import { fallbackOffer, mainMode } from './main.ts';
+import { effectiveModels, readOverrides } from './overrides.ts';
 import { registerLeadRoute } from './lead-route.ts';
 import { leadCompaction } from './compact.ts';
 import { routeCommand, teamTarget, type RouteTarget } from './routing.ts';
@@ -61,10 +62,10 @@ function registerRoleAgents(pi: ExtensionAPI, team: Team, presets: Presets) {
   return active;
 }
 // A lead that reads, builds or checks by itself pays for its whole context on every call: on
-// 2026-11-26 a lead with a 250k context ran bash 247 times, 78% of its cost. Steer it back to
-// delegating when it does that several times in a short while. The message is shown to the user too.
+// 2026-11-26 a lead with a 250k context ran bash 247 times, 78% of its cost. Small work is the lead's
+// own, but a burst of calls means a job has outgrown it; say so once in a while. Shown to the user too.
 function watchDirectWork(pi: ExtensionAPI) {
-  const limit = Number(process.env.PI_TEAM_LEAD_DIRECT_WARN ?? 6);
+  const limit = Number(process.env.PI_TEAM_LEAD_DIRECT_WARN ?? 10);
   if (!(limit > 0)) return;
   const window = 10 * 60_000;
   const quiet = 30 * 60_000;
@@ -79,7 +80,7 @@ function watchDirectWork(pi: ExtensionAPI) {
     const counts = calls.reduce<Record<string, number>>((m, c) => (m[c.tool] = (m[c.tool] ?? 0) + 1, m), {});
     const tokens = ctx.getContextUsage()?.tokens;
     pi.sendMessage({ customType: 'pi-team-lean', display: true, details: { counts },
-      content: `pi-team: you ran ${calls.length} tool calls yourself in the last 10 minutes (${Object.entries(counts).map(([t, n]) => `${t} ${n}`).join(', ')})${tokens ? ` with a ${Math.round(tokens / 1000)}k-token context that every call re-reads` : ''}. Hand reading, searching, builds, tests and checks to a member (scout, reviewer, qa-tester) or resume the member that did the last round, and work from its summary.` },
+      content: `pi-team: you ran ${calls.length} tool calls yourself in the last 10 minutes (${Object.entries(counts).map(([t, n]) => `${t} ${n}`).join(', ')})${tokens ? ` with a ${Math.round(tokens / 1000)}k-token context that every call re-reads` : ''}. That is past small work: brief the member whose field fits with what you found so far (paths, findings, what failed), or resume the member that did the last round, and work from its summary. Builds, tests, device runs and long logs always go to a member.` },
     { deliverAs: 'steer' });
     calls = [];
   });
@@ -338,24 +339,35 @@ export default async function piTeam(pi: ExtensionAPI) {
     state = participant(pi, team, () => 'orchestrator', true);
     const lead = state;
     trackRun(pi, team, lead.row);
-    // The lead starts at its first candidate's effort; if the user then picks another thinking level,
-    // the router follows it (see registerModels), so the orchestrator's effort can change for a while.
+    // The lead runs like main mode: on a fixed physical model, so pi's thinking level, idle cache
+    // warming and prompt cache work as usual (a team/<preset>.orchestrator virtual model had none of
+    // that). It picks the first signed-in orchestrator candidate that is not cooling down once, and
+    // keeps the pick as a session entry: a resumed session restores its own model, including one the
+    // user chose later with /model. A failed model is not swapped on its own; fallbackOffer asks.
     let leadLevel: ThinkingLevel | undefined;
-    // A resumed session also starts with reason "startup", so the first pick is kept as a session entry
-    // and the user's later choice is not overwritten.
-    pi.on('session_start', (_event, ctx) => {
-      const saved = (ctx.sessionManager.getBranch() as { type: string; customType?: string; data?: { level?: ThinkingLevel } }[])
-        .findLast(e => e.type === 'custom' && e.customType === 'pi-team-lead-level')?.data?.level;
-      if (saved) { leadLevel = saved; return; }
-      const ready = candidates(orchestrator.models, ctx.modelRegistry);
-      leadLevel = (ready.find(c => c.until <= Date.now()) ?? ready[0])?.level;
-      if (!leadLevel) return;
-      pi.setThinkingLevel(leadLevel);
-      pi.appendEntry('pi-team-lead-level', { level: leadLevel });
+    const leadModels = () => effectiveModels(orchestrator, readOverrides({ team: team.id })['orchestrator']);
+    pi.on('session_start', async (_event, ctx) => {
+      const saved = (ctx.sessionManager.getBranch() as { type: string; customType?: string; data?: { model?: string; level?: ThinkingLevel } }[])
+        .findLast(e => e.type === 'custom' && e.customType === 'pi-team-lead-model')?.data;
+      if (saved?.level) { leadLevel = saved.level; return; }
+      // A new lead, or one started by older code on the virtual model (its session cannot restore that).
+      const ready = candidates(leadModels(), ctx.modelRegistry);
+      const pick = ready.find(c => c.until <= Date.now()) ?? ready[0];
+      const warn = (message: string) => { if (ctx.hasUI) ctx.ui.notify(message, 'warning'); else process.stderr.write(`${message}\n`); };
+      if (!pick) return warn(`pi-team: no signed-in orchestrator candidate for ${team.preset} (${leadModels().join(', ')}); the lead stays on ${ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : 'pi\'s default model'}.`);
+      if (!await pi.setModel(pick.model)) return warn(`pi-team: cannot switch the lead to ${pick.key}: no credentials.`);
+      pi.setThinkingLevel(pick.level);
+      leadLevel = pick.level;
+      pi.appendEntry('pi-team-lead-model', { model: pick.key, level: pick.level });
+      lead.routed(pick.key, pick.index !== 0, pick.level);
+    });
+    const offerFallback = fallbackOffer(pi, () => leadModels(), 'lead model');
+    pi.on('agent_settled', (_event, ctx) => {
+      if (ctx.hasUI) void offerFallback(ctx).catch(e => ctx.ui.notify(`pi-team: ${String(e)}`, 'warning'));
     });
     leadLevelRef = () => leadLevel;
     registerLeadRoute(pi, team, () => leadLevel);
-    registerModels(pi, presets, lead.routed, { leadLevel: () => leadLevel });
+    registerModels(pi, presets, undefined, { skipOrchestrator: true });
     leadCompaction(pi, Number(process.env.PI_TEAM_LEAD_COMPACT_TOKENS ?? 200_000));
     watchDirectWork(pi);
     registerMailbox(pi, lead.owner, lead.update);

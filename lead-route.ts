@@ -10,7 +10,8 @@ import { applyEffort, applyModel, applyPreset, cacheNote, routeRows, teamTarget,
 // or effort, or routes the team through another preset's models. A change the user asked for needs
 // their words quoted in approval; those words must appear in a user message of this session or in
 // mail from the main session. On its own judgement the lead may only lower a role's effort or move a
-// model that is already in the role's candidate chain to the front, at no higher effort.
+// model that is already in the role's candidate chain to the front, at no higher effort. For the
+// orchestrator role the change is the lead's own session model and thinking level.
 
 const rank = (level: string) => (levels as readonly string[]).indexOf(level);
 const key = (candidate: string) => candidate.replace(/:[a-z]+$/, '');
@@ -38,7 +39,7 @@ export function registerLeadRoute(pi: ExtensionAPI, team: Team, leadLevel: () =>
     name: 'team_route', label: 'Team routes',
     description: 'Show or change which model and effort each role of this team runs on (the lead\'s /team routes). action "show" lists every role\'s next model, fallbacks and running members. '
       + '"model" puts a model first for a role (value: alias[:level] such as opus:high, or provider/model[:level], or reset). "effort" sets a role\'s thinking level (value: low, medium, high, xhigh or reset). '
-      + '"preset" routes every role through another preset\'s models (value: a preset name, or reset); the team keeps its member names, tools and skills. role may be "all" for model and effort; "orchestrator" is you. '
+      + '"preset" routes every member role through another preset\'s models (value: a preset name, or reset); the team keeps its member names, tools and skills, and you keep your model. role may be "all" for model and effort; "orchestrator" is you: model and effort switch this session\'s own model and thinking level, and a model switch sends the whole conversation again once. '
       + 'When the user asked for the change, pass approval with their words quoted exactly. Without approval you may only lower a role\'s effort, or move a model already in that role\'s candidates to the front at no higher effort; propose anything else to the user first. '
       + 'Changes apply from each role\'s next request; running members keep their model until then.',
     parameters: Type.Object({
