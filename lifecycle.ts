@@ -492,18 +492,18 @@ export function report(team: Team, summary: string, status: string) {
   writeAtomic(path, lines.join('\n'));
   return path;
 }
-export function splitGoal(args: string, usage: string) {
+export function splitGoal(args: string, usage: string, optionalTarget = false) {
   const marker = /(?:^|\s)--(?:\s|$)/u.exec(args);
-  const target = marker && args.slice(0, marker.index).trim();
-  const goal = marker && args.slice(marker.index + marker[0].length).trim();
-  if (!target || !goal) throw new Error(usage);
+  const target = marker ? args.slice(0, marker.index).trim() : '';
+  const goal = marker ? args.slice(marker.index + marker[0].length).trim() : '';
+  if ((!target && !optionalTarget) || !goal) throw new Error(usage);
   return { target, goal };
 }
+// An empty preset means the host default (main.json's preset); startNamed resolves it.
 export function parseStart(args: string): Start {
-  const { target, goal } = splitGoal(args, 'Usage: /team start <preset or alias> [--title TEXT] [--name N] [--base REF] [--icon EMOJI] [--from-dirty] -- <goal>');
+  const { target, goal } = splitGoal(args, 'Usage: /team start [preset or alias] [--title TEXT] [--name N] [--base REF] [--icon EMOJI] [--from-dirty] -- <goal>', true);
   const firstFlag = /(?:^|\s)--\S/u.exec(target);
   const preset = firstFlag ? target.slice(0, firstFlag.index).trim() : target;
-  if (!preset) throw new Error('A preset or alias is required.');
   const tokens = firstFlag ? target.slice(firstFlag.index).trim().split(/\s+/u) : [];
   const result: Start = { preset, goal };
   const seen = new Set();

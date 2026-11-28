@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { join } from 'node:path';
 import { readdirSync, rmSync, statSync } from 'node:fs';
 import { authGaps, candidates, imageDisabled, mainAgentName, recordCooldown, roleAgent, unknownPreset, type Presets } from './presets.ts';
-import { readJson, remove, root, writeJson } from './registry.ts';
+import { hostPreset, remove, root, setHostPreset } from './registry.ts';
 import { readOverrides, routeTable, scopePath } from './overrides.ts';
 import type { RouteTarget } from './routing.ts';
 import { routingGuide } from './lifecycle.ts';
@@ -13,7 +13,6 @@ import { repoSkills } from './skills.ts';
 // as pi-team.<role> agents, which route through team/<preset>.<role> in the child.
 interface Registration { dispose(): void }
 const entryType = 'pi-team-main';
-const defaultPath = join(root, 'main.json');
 const overflow = /context(?:[ _-]window| length)|too long|maximum context|prompt is too long/i;
 // pi-subagents' toolActivation "auto" shows only its subagents_enable loader, whose description
 // says not to delegate unless the user asks. Turning main mode on is that request, so main mode
@@ -141,7 +140,7 @@ export function mainMode(pi: ExtensionAPI, load: () => Presets, cwd: string) {
     try {
       if (saved) { register(presetOf(saved), saved); preset = saved; return; } // the session restores its own model
       if (saved === null || (event.reason !== 'startup' && event.reason !== 'new')) return;
-      const host = readJson<{ preset?: string }>(defaultPath)?.preset;
+      const host = hostPreset();
       if (!host || process.argv.some(a => a === '--model' || a.startsWith('--model='))) return;
       notify(await use(host, ctx), 'info');
     } catch (e) { notify(`pi-team main mode: ${e instanceof Error ? e.message : String(e)}`, 'warning'); }
@@ -195,17 +194,17 @@ export function mainMode(pi: ExtensionAPI, load: () => Presets, cwd: string) {
       const asDefault = words.includes('--default');
       const [name] = words.filter(w => w !== '--default');
       if (!name) {
-        const host = readJson<{ preset?: string }>(defaultPath)?.preset;
+        const host = hostPreset();
         return [`Main mode: ${preset ?? 'off'}. Host default: ${host ?? 'none'}.`, ...(preset ? [table(load(), ctx)] : []),
           'Usage: /team main <preset> [--default] | off [--default]; adjust with /team effort and /team model'].join('\n');
       }
       if (name === 'off') {
         off();
-        if (asDefault) remove(defaultPath);
+        if (asDefault) setHostPreset(undefined);
         return `Main mode off; the model stays as it is.${asDefault ? ' Host default cleared.' : ''}`;
       }
       const result = await use(name, ctx);
-      if (asDefault) writeJson(defaultPath, { preset: name });
+      if (asDefault) setHostPreset(name);
       return `${result}${asDefault ? `\nNew sessions on this host start in ${name} unless --model is given.` : ''}`;
     },
   };

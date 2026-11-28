@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { realpathSync } from 'node:fs';
-import { aliasHints, delegate, readTargets, resolveTarget, showAliases, startNamed, type TeamTargets } from './aliases.ts';
+import { aliasHints, defaultTarget, delegate, readTargets, resolveTarget, showAliases, startNamed, type TeamTargets } from './aliases.ts';
 import { board, status, widget } from './board.ts';
 import { cacheRetention, closeGuide, closePlan, closeTeam, findSummary, memberCacheRetention, parseStart, refreshLeadPrompt, relaunchAsLead, report, resumeLead, retitle, roleList, splitGoal, syncHerdrLabel } from './lifecycle.ts';
 import { applyMainCache, cacheNotice, cacheReport, shellCache } from './cache.ts';
@@ -25,7 +25,7 @@ import { routesView } from './routes-view.ts';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import { repoSkills, skillCatalog, skillSize } from './skills.ts';
 import { backfillStats, directWork, loadStats, retroAsk, retroReport, roleSkills, statsReport, trackRun, writeRetro } from './stats.ts';
-import { errorCode, getLead, getTeam, git, isLive, members, scopedTeams, teamDir, teams, teamTitle, text, writeJson, type FleetEntry, type Team } from './registry.ts';
+import { errorCode, getLead, getTeam, git, hostPreset, isLive, members, scopedTeams, teamDir, teams, teamTitle, text, writeJson, type FleetEntry, type Team } from './registry.ts';
 
 interface Registration { dispose(): void }
 interface RequiredExtensionAPI {
@@ -99,9 +99,9 @@ function teamStatus(select?: string) {
   return { team, state: info.state, lead: info.lead, members: info.rows, diff: info.diff, messages: info.sent.length, summary };
 }
 // Warn when a preset would not run on its first choices here, e.g. mix on a Claude-only host.
-function gapNote(ctx: ExtensionContext, targets: TeamTargets, cwd: string, input: string) {
+function gapNote(ctx: ExtensionContext, targets: TeamTargets, cwd: string, input?: string) {
   try {
-    const { preset } = resolveTarget(targets, input);
+    const { preset } = resolveTarget(targets, defaultTarget(input));
     const gaps = authGaps(readPresets(cwd)[preset] ?? {}, ctx.modelRegistry);
     return gaps.length ? `\nNote: on this host ${preset} is not on its first choice for ${gaps.join(', ')}. A preset for the signed-in accounts (for example claude or codex) avoids that.` : '';
   } catch { return ''; }
@@ -122,8 +122,8 @@ function registerMainLoader(pi: ExtensionAPI, refresh: () => void, targets: Team
     async execute() {
       if (!installed) {
         pi.registerTool({ name: 'team_start', label: 'Start team', description: 'Create a new Pi team from a preset or alias and give the user its interactive lead. Only when explicitly requested.',
-          parameters: Type.Object({ preset: Type.String(), title, name, base: Type.Optional(Type.String()), fromDirty: Type.Optional(Type.Boolean()), goal: Type.String(), icon: Type.Optional(Type.String({ description: 'One emoji that identifies the team, if the user asked for one.' })) }),
-          async execute(_id, p, _signal, _update, ctx) { const result = startNamed(ctx.cwd, targets, p); refresh(); return text(result + gapNote(ctx, targets, cwd, p.preset)); } });
+          parameters: Type.Object({ preset: Type.Optional(Type.String({ description: `Preset or alias. Omit it unless the user named one; the team then uses this host's default preset${hostPreset() ? ` (now ${hostPreset()})` : ''}.` })), title, name, base: Type.Optional(Type.String()), fromDirty: Type.Optional(Type.Boolean()), goal: Type.String(), icon: Type.Optional(Type.String({ description: 'One emoji that identifies the team, if the user asked for one.' })) }),
+          async execute(_id, p, _signal, _update, ctx) { const result = startNamed(ctx.cwd, targets, { ...p, preset: p.preset ?? '' }); refresh(); return text(result + gapNote(ctx, targets, cwd, p.preset)); } });
         pi.registerTool({ name: 'team_status', label: 'Team status', description: 'Read active team registry or the selected team summary.', parameters: Type.Object({ team: Type.Optional(Type.String()) }),
           async execute(_id, p) { return text(JSON.stringify(teamStatus(p.team))); } });
         pi.registerTool({ name: 'team_send', label: 'Send to team lead', description: 'Send a direct message to an exact lead@<team> address. For assigning work to a named team, use team_delegate instead, even if you know its address.', parameters: sendParams,
@@ -527,7 +527,7 @@ export default async function piTeam(pi: ExtensionAPI) {
         pi.sendMessage({ customType: 'pi-team-summary', content: summary, display: true, details: { team: args } }, { deliverAs: 'nextTurn' });
         return show(ctx, `Queued ${args} summary for the next user turn (no model request).`);
       }
-      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | preset use <preset>|reset [--team <id>] | send <address> <body> | routes | effort <role|all> <level|reset> | model <role|all> <model|reset> [--team <id>] | clean [team] [--yes] | cache${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start <preset or alias> [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | resume <team> | close <team> [--confirm-lead] [--confirm-unmerged] [--keep-worktree]'}`);
+      show(ctx, `Usage: /team board | panel [on|off|reset] | stats [role|import|retro <team>] | preset show [preset] | preset use <preset>|reset [--team <id>] | send <address> <body> | routes | effort <role|all> <level|reset> | model <role|all> <model|reset> [--team <id>] | clean [team] [--yes] | cache${team ? ' | title <title> | done [summary]' : ' | title <team> <title> | main [preset|off] [--default] | start [preset or alias] [options] -- <goal> | delegate <alias or preset> -- <task> | alias show | collect <team> | resume <team> | close <team> [--confirm-lead] [--confirm-unmerged] [--keep-worktree]'}`);
     } catch (e) { if (ctx.hasUI) ctx.ui.notify(e instanceof Error ? e.message : String(e), 'error'); else throw e; }
   } });
 }

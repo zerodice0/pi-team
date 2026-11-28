@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { getLead, members, readJson, readText, root, writeJson, type Team } from './registry.ts';
+import { getLead, mainConfigPath, members, readJson, readText, root, writeJson, type Team } from './registry.ts';
 import { cacheRetention, memberCacheRetention } from './lifecycle.ts';
 
 // Prompt-cache retention is an environment setting only (pi has no settings key). Leads and members
@@ -8,7 +8,7 @@ import { cacheRetention, memberCacheRetention } from './lifecycle.ts';
 
 // What the shell gave this process, before pi-team fills anything in.
 export const shellCache = { lead: process.env.PI_CACHE_RETENTION, member: process.env.PI_SUBAGENT_CACHE_RETENTION };
-const mainPath = join(root, 'main.json');
+const mainPath = mainConfigPath;
 interface MainCache { cacheRetention?: string; subagentCacheRetention?: string }
 const valid = (v: unknown): v is string => v === 'long' || v === 'short' || v === 'none';
 // main.json fills what the shell left empty, for main sessions: shell env > main.json > unset (pi's 5 minutes).

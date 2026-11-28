@@ -129,6 +129,17 @@ export function remove(path: string) {
   try { unlinkSync(path); } catch (e) { if (errorCode(e) !== 'ENOENT') throw e; }
 }
 export function writeJson(path: string, value: unknown, createParent = true) { writeAtomic(path, JSON.stringify(value) + '\n', createParent); }
+// The host's main-session settings: the main-mode preset new sessions start in, which is also the
+// preset a team start uses when none is named, and cache retention (see cache.ts).
+export const mainConfigPath = join(root, 'main.json');
+export interface MainConfig { preset?: string; cacheRetention?: string; subagentCacheRetention?: string }
+export const hostPreset = () => readJson<MainConfig>(mainConfigPath)?.preset || undefined;
+// Change only the preset, keeping the cache settings kept in the same file.
+export function setHostPreset(preset: string | undefined) {
+  const { preset: _old, ...rest } = readJson<MainConfig>(mainConfigPath) ?? {};
+  const next = preset ? { preset, ...rest } : rest;
+  if (Object.keys(next).length) writeJson(mainConfigPath, next); else remove(mainConfigPath);
+}
 export function pidLive(pid: number) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; }

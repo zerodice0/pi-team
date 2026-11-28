@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { start, type Start } from './lifecycle.ts';
 import { send } from './mailbox.ts';
-import { checkIcon, getLead, isLive, leadState, locked, namePattern, readJson, root, teams, type Team } from './registry.ts';
+import { checkIcon, getLead, hostPreset, isLive, leadState, locked, namePattern, readJson, root, teams, type Team } from './registry.ts';
 import type { Presets } from './presets.ts';
 
 interface Alias { preset: string; names: string[]; description: string; base?: string; icon?: string }
@@ -84,8 +84,15 @@ export function showAliases(targets: TeamTargets) {
   }).join('\n') || 'No team aliases configured.';
 }
 
+// No preset or alias: the host's default preset, the one new main sessions start in (/team main <preset> --default).
+export function defaultTarget(input?: string) {
+  if (input?.trim()) return input;
+  const preset = hostPreset();
+  if (!preset) throw new Error('No preset given and no host default. Name a preset or alias, or set the default with /team main <preset> --default.');
+  return preset;
+}
 export function startNamed(cwd: string, targets: TeamTargets, params: Start) {
-  const { preset, alias } = resolveTarget(targets, params.preset);
+  const { preset, alias } = resolveTarget(targets, defaultTarget(params.preset));
   return start(cwd, { ...params, preset, base: params.base ?? alias?.base }, alias);
 }
 export function delegate(cwd: string, targets: TeamTargets, input: string, task: string, fromDirty = false, label: { title?: string; name?: string } = {}) {

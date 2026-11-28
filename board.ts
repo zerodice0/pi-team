@@ -217,7 +217,7 @@ export async function board(ctx: ExtensionContext, initial?: string, sender?: Ad
         let body: Line[];
         let begin = 0;
         if (!d) body = [{ left: [['  '], [hidden && !all ? 'No teams in this repository' : 'No teams yet', 'name', true]] },
-          { left: [['  '], [hidden && !all ? `a shows ${count(hidden, 'team')} in other repositories` : '/team start <preset or alias> -- <goal>', 'label']] }];
+          { left: [['  '], [hidden && !all ? `a shows ${count(hidden, 'team')} in other repositories` : '/team start [preset or alias] -- <goal>', 'label']] }];
         else if (view === 0) {
           const cards = data.map((t, i) => card(t, i === selected, inner));
           body = cards.flatMap((c, i) => i ? [blank, ...c] : c);

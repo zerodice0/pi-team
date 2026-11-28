@@ -49,7 +49,7 @@ export PI_CACHE_RETENTION=long
 
 | 명령 | 설명 |
 |---|---|
-| `/team start <preset or alias> [--title 제목] [--name X] [--base REF] [--icon 🎨] -- <목표>` | 팀을 만들고 팀장을 띄웁니다. `--title`은 다음 옵션 전까지의 단어를 모두 제목으로 씁니다. `--name`은 팀 ID(영어 한 단어, 소문자·하이픈으로 정리)입니다. |
+| `/team start [preset or alias] [--title 제목] [--name X] [--base REF] [--icon 🎨] -- <목표>` | 팀을 만들고 팀장을 띄웁니다. preset을 생략하면 이 호스트의 기본 preset(`/team main <preset> --default`로 정한 값)을 쓰고, 기본값이 없으면 preset을 적으라고 안내합니다. 메인 모델의 `team_start`도 사용자가 preset을 말하지 않으면 생략합니다. `--title`은 다음 옵션 전까지의 단어를 모두 제목으로 씁니다. `--name`은 팀 ID(영어 한 단어, 소문자·하이픈으로 정리)입니다. |
 | `/team title <team> <제목>` | 팀 제목을 바꿉니다. 팀장 세션에서는 `/team title <제목>`입니다. ID, branch, 주소는 그대로이고 Herdr workspace 이름(터미널 창 제목)도 함께 바뀝니다. 팀장은 시작할 때마다 workspace 이름을 제목에 맞춥니다. |
 | `/team delegate <alias> -- <작업>` | 별칭에 해당하는 기존 팀에 작업을 보내고, 팀이 없으면 새로 만듭니다. |
 | `/team stats [role]` · `/team stats import` · `/team stats retro <team>` | 역할별 실행 기록(턴 수, 최대 문맥, 캐시 읽기, 비용)과 스킬 사용(목록에 실렸는지, 실제로 읽혔는지)을 보여 줍니다. `import`는 기록 기능이 생기기 전에 끝난 팀의 세션 파일에서 기록을 만듭니다(`--dry-run` 지원). `retro`는 한 팀의 회고 초안을 보여 줍니다. |
@@ -61,7 +61,7 @@ export PI_CACHE_RETENTION=long
 | `/team resume <team>` | 프로세스가 끝난 팀장(잠자기, 충돌, 닫힌 pane)을 마지막 세션으로 다시 띄웁니다. 팀 pane이 셸 프롬프트에 있으면 그 pane에서 실행하고, 다른 프로세스가 돌고 있으면 실행할 명령만 보여 줍니다. 팀장은 `PI_TEAM_ROLE=lead`와 `PI_TEAM_ID`가 있어야 팀장으로 뜨므로, 팀 pane에서 그냥 `pi`로 세션을 재개하면 팀장이 아니라 일반 메인 세션이 됩니다. 이렇게 시작한 세션에는 경고가 뜹니다. |
 | `/team cache` | 캐시 보존 설정과 최근 턴의 1시간 캐시 사용을 보여 줍니다(아래 「설치」의 캐시 설정 참고). |
 | `/team clean [team] [--yes]` | 팀을 연 채로 다시 만들 수 있는 빌드 산출물만 지웁니다. 대상은 Git이 무시하고 추적 파일이 없는 `build`, `.build`, `.dart_tool`, `DerivedData`, `Pods`, `node_modules`, `.gradle`, `.cxx`, `target`, `dist`, `.next`, `.turbo`, `.expo`, `.svelte-kit` 폴더입니다(깊이 4까지, `artifacts/` 제외). 목록과 크기를 보여 주고 확인을 받은 뒤 지웁니다. `config/app.env`처럼 무시되는 설정 파일은 건드리지 않습니다. 작업 중인 구성원이 있으면 거절합니다. 팀장 세션에서는 팀을 생략할 수 있습니다. |
-| `/team main [<preset>\|off] [--default]` | 메인 모드를 켜거나 끄고, 인자가 없으면 상태를 보여 줍니다. `--default`는 이 호스트의 새 세션에 적용할 기본값을 저장하거나 지웁니다. |
+| `/team main [<preset>\|off] [--default]` | 메인 모드를 켜거나 끄고, 인자가 없으면 상태를 보여 줍니다. `--default`는 이 호스트의 새 세션에 적용할 기본값을 저장하거나 지웁니다. 이 값은 preset 없이 `/team start`를 실행할 때의 기본 preset이기도 합니다. `main.json`의 캐시 설정은 그대로 둡니다. |
 | `/team routes [--team <id>] [--text]` | 라우터 설정 화면을 엽니다. 역할마다 다음 요청이 갈 모델·effort(NEXT), 예비 후보(FALLBACK), 지금 실행 중인 구성원의 모델(RUNNING)을 보여 주고, 임시 조정한 역할은 주황색입니다. 팀장(`orchestrator`) 줄은 팀장 세션의 실제 모델이며, 다른 세션에서는 볼 수만 있습니다. `↑↓` 역할, `←→` effort 한 단계, `m` 모델 고르기(이 호스트에서 로그인된 모델만), `r` 역할 되돌리기, `R` 전체 되돌리기, `tab` 대상 전환(메인 모드와 팀들), `esc` 닫기입니다. 바꾼 값은 바로 저장되어 다음 요청부터 적용됩니다. 실행 중인 구성원은 다음 요청에서 새 모델로 옮깁니다(이때 프롬프트 캐시를 한 번 새로 씁니다). `--text`나 print 모드에서는 표를 출력합니다. |
 | `/team effort <role\|all> <level\|reset> [--team <id>]` | 역할의 effort(thinking 수준)를 임시로 바꿉니다. preset 파일은 바꾸지 않으며 다음 요청부터 적용됩니다. 팀장 세션의 `orchestrator`와 메인 모드의 `orchestrator`는 그 세션의 thinking 수준 자체를 바꿉니다. 메인 세션에서 `--team`으로 팀장 effort를 바꿀 수는 없으며, 팀장 pane에서 바꿉니다. |
 | `/team model <role\|all> <provider/model[:level] 또는 별칭[:level]\|reset> [--team <id>]` | 역할이 가장 먼저 시도할 모델을 임시로 지정합니다(예: `opus:high`). 원래 후보는 그 뒤의 예비로 남습니다. 메인 모드와 팀장 세션의 `orchestrator`는 그 세션의 모델을 바로 바꿉니다(`/model`과 같습니다). 메인 세션에서 `--team`으로 팀장 모델을 바꿀 수는 없습니다. |
@@ -71,7 +71,7 @@ export PI_CACHE_RETENTION=long
 ## 설정 파일
 
 - preset: pi-team에 들어 있는 `presets.default.json` 위에 `~/.pi/agent/teams/presets.json`, 그 위에 저장소별 `<repo>/.pi/teams/presets.json`을 겹칩니다(아래 「preset 구조」).
-- 메인 모드 기본값: `~/.pi/agent/teams/main.json`(`/team main <preset> --default`로 만듭니다)
+- 메인 모드와 팀 시작의 기본 preset: `~/.pi/agent/teams/main.json`의 `preset`(`/team main <preset> --default`로 만듭니다)
 - 별칭: `~/.pi/agent/teams/aliases.json`, 또는 `<repo>/.pi/teams/aliases.json`
 - 시작 제외 목록: `~/.pi/agent/teams/start-ignore`, 또는 `<repo>/.pi/teams/start-ignore`(gitignore 문법)
 
